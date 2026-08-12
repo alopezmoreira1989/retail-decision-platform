@@ -16,7 +16,7 @@ The central question this project explores:
 
 > **Given imperfect and heterogeneous retail data, can we infer what is happening in stores and produce useful, explainable, and prioritized business recommendations?**
 
-To answer that, the project builds its own imperfect world to analyze. A hidden simulation layer generates a coherent, internally-consistent retail universe (demand, sales, inventory, promotions, seasonality, store and product behavior) and then deliberately degrades what is *observable* from it — the same way real retailer feeds are late, partial, duplicated, mis-mapped, or stale. The analytical pipeline only ever sees the degraded, observable data. The hidden ground truth is used exclusively to evaluate how well the platform did, never to help it decide.
+To answer that, the project builds its own imperfect world to analyze, in two deliberately separate phases. **Phase 1** simulates coherent business reality — demand, sales, inventory, promotions, seasonality, store and product behavior — as a persisted, versioned ground-truth snapshot. **Phase 2** simulates what each fictional retailer's own systems would actually transmit *about* that reality: late, partial, duplicated, mis-mapped, or stale, depending on the retailer. The analytical platform only ever sees Phase 2's output. Phase 1's ground truth is used exclusively to evaluate how well the platform did, never to help it decide. See [docs/SIMULATION.md](docs/SIMULATION.md) for why this split matters.
 
 ## The problem it solves
 
@@ -27,36 +27,26 @@ Rather than hardcoding business rules ("if stock < X, flag it"), the project inv
 ## High-level architecture
 
 ```text
-Synthetic Retail World (hidden ground truth)
+Retail World (Phase 1 — simulated business reality)
         ↓
-Retailer-specific source feeds (heterogeneous, imperfect)
+Versioned Ground Truth (persisted world snapshot)
         ↓
-RAW
+Retailer Feed Simulation (Phase 2 — per-retailer imperfect observation)
         ↓
-Ingestion / orchestration
+Imperfect RAW Data                                    ← Decision Platform starts here
         ↓
-Bronze   (landed, as-received)
+Data Platform (ingestion → Bronze → data quality → Silver → Gold)
         ↓
-Data quality + normalization
+Analytics (detection / inference: availability, underperformance, anomalies, assortment)
         ↓
-Silver   (conformed, canonical entities)
+Recommendations (generation + prioritization)
         ↓
-Analytical models / feature engineering
-        ↓
-Gold     (analysis-ready marts)
-        ↓
-Detection / inference (availability, underperformance, anomalies, assortment)
-        ↓
-Recommendation Engine (generation + prioritization)
-        ↓
-Commercial Agent / User
-        ↓
-Feedback
+Human Feedback (commercial agent review → confirmed / rejected / other)
         ↓
 Model evaluation / improvement
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full breakdown of layers, boundaries, and the evaluation loop, and [docs/SIMULATION.md](docs/SIMULATION.md) for how the hidden world state relates to observable data.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full breakdown of layers, boundaries, and the evaluation loop, and [docs/SIMULATION.md](docs/SIMULATION.md) for why simulation is split into two phases and how the ground truth relates to observable data.
 
 ## Fictional Data & Originality
 
@@ -84,7 +74,7 @@ Chosen for being modern, largely free/open-source, and representative of product
 retail-decision-platform/
 │
 ├── docs/               conceptual & architectural documentation
-├── simulator/          hidden world-state + synthetic data generation
+├── simulator/          Phase 1 (world/ground truth) + Phase 2 (feeds/retailer observation)
 ├── ingestion/          retailer feed adapters, Bronze landing
 ├── data_quality/       validation rules, fault-injection framework
 ├── transformations/    Bronze → Silver → Gold (dbt project lives here)
@@ -106,30 +96,32 @@ Each directory currently contains a short `README.md` describing its intended re
 
 Development proceeds in milestones, each a meaningful capability increase rather than a technical checkbox. Full issue backlog lives on the [GitHub Issues](../../issues) board.
 
-1. **Foundation & Architecture** — domain model, repo structure, tech choices, dev environment
-2. **Synthetic Retail World** — first coherent simulation of stores, products, demand, sales, inventory, orders
-3. **Retailer Data Feeds** — retailer-specific RAW feeds with varying schema, frequency, and data quality
-4. **Data Platform** — ingestion, Bronze/Silver/Gold, data quality checks, dbt transformations
-5. **Analytical Engine** — first analytical models and deterministic/statistical baselines
-6. **Recommendation Engine** — actionable, prioritized recommendations from analytical outputs
-7. **Human Feedback Loop** — simulated/real commercial agent feedback and recommendation evaluation
-8. **ML & Adaptive Intelligence** — models that learn expected behavior instead of relying on fixed rules
-9. **Orchestration & Productionization** — Airflow, Docker, CI/CD, retries, logging, observability
-10. **Application & Portfolio Release** — user-facing interface, diagrams, demonstrations, final write-up
+- **M1 — Foundation & Architecture** — domain model, repo structure, tech choices, dev environment
+- **M2A — Retail World / Ground Truth** (Phase 1) — first coherent simulation of stores, products, demand, sales, inventory, orders, as a persisted, versioned world snapshot
+- **M2B — Retailer Feed Simulation** (Phase 2) — retailer-specific RAW feeds with varying schema, frequency, and data quality, derived from the same world snapshot
+- **M3 — Data Ingestion & Data Quality** — Bronze landing, ingestion orchestration, canonical Silver schema, data quality checks
+- **M4 — Bronze / Silver / Gold** — dbt project, Silver normalization, Gold analytical marts
+- **M5 — Analytical Engine** — first analytical models and deterministic/statistical baselines
+- **M6 — Recommendation Engine** — actionable, prioritized recommendations from analytical outputs
+- **M7 — Human Feedback Loop** — simulated/real commercial agent feedback and recommendation evaluation
+- **M8 — ML & Adaptive Intelligence** — models that learn expected behavior instead of relying on fixed rules
+- **M9 — Orchestration & Productionization** — Airflow, Docker, CI/CD, retries, logging, observability
+- **M10 — Application & Portfolio Release** — user-facing interface, diagrams, demonstrations, final write-up
 
 The first working target is a small **end-to-end vertical slice**: one retailer, a handful of stores, a small catalogue, POS + inventory + orders, flowing all the way through to a single recommendation — before the system is broadened. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#incremental-delivery-principle).
 
 ## How the components interact
 
-- The **simulator** produces a hidden ground truth and, from it, retailer-shaped observable feeds (RAW).
-- **Ingestion** lands those feeds as-received into **Bronze**, per retailer, without altering their structure.
+- **Phase 1** produces a persisted, versioned ground-truth world snapshot — simulated business reality, with no notion of retailers' data systems.
+- **Phase 2** reads that snapshot and produces retailer-shaped, imperfect observable feeds (RAW) — the same world, observed differently per retailer.
+- **Ingestion** lands RAW feeds as-received into **Bronze**, per retailer, without altering their structure.
 - **Data quality + transformations** conform heterogeneous Bronze data into a canonical **Silver** model, applying validation and identifier resolution.
 - **Models / feature engineering** build **Gold** analytical marts from Silver.
 - **Detection & inference** models read Gold and produce structured findings (e.g. "likely out of stock").
 - The **recommendation engine** turns findings into prioritized, explainable recommendations.
 - A **commercial agent** reviews recommendations and provides **feedback** (confirmed, rejected, wrong data, etc.).
 - Feedback flows back in as a new data source, used for **evaluation** and, later, **active learning** and confidence calibration.
-- Throughout, an **evaluation harness** (test-only) compares recommendations against the simulator's hidden ground truth — something the production pipeline never has access to.
+- Throughout, an **evaluation harness** (test-only) compares recommendations against Phase 1's ground truth — something the production-like platform (everything from RAW onward) never has access to.
 
 ## Status
 
