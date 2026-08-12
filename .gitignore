@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.python-version
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Data (this project should never commit generated or real data artifacts)
+data/
+*.parquet
+*.duckdb
+*.duckdb.wal
+
+# dbt
+transformations/target/
+transformations/dbt_packages/
+transformations/logs/
+
+# Airflow
+airflow.cfg
+airflow.db
+logs/
+
+# MLflow
+mlruns/
+
+# Environment / secrets
+.env
+.env.*
+*.local
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/

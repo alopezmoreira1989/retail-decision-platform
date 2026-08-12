@@ -1,0 +1,46 @@
+name: Development task
+description: A scoped, actionable piece of work on the platform (default template for roadmap issues)
+labels: []
+body:
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: One or two sentences on what this issue achieves and why it matters to the milestone.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Relevant background — links to docs, related issues, prior decisions.
+    validations:
+      required: false
+
+  - type: textarea
+    id: approach
+    attributes:
+      label: Proposed approach
+      description: High-level plan. Doesn't need to be final — enough to start.
+    validations:
+      required: false
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: A checklist of what "done" means for this issue.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: input
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Other issues that should land first, if any.
+    validations:
+      required: false
