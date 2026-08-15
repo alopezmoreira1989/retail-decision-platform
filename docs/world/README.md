@@ -22,7 +22,7 @@ Later documents may depend on earlier ones — the order below is a starting poi
 | 3 | [Retailer Universe](03-retailer-universe.md) | **Approved** |
 | 4 | [Store Universe](04-store-universe.md) | **Approved** |
 | 5 | [Assortment](05-assortment.md) | **Approved** |
-| 6 | Demand | Not started |
+| 6 | [Demand](06-demand.md) | **Approved** |
 | 7 | Sales / POS Reality | Not started |
 | 8 | Inventory | Not started |
 | 9 | Orders / Replenishment | Not started |
