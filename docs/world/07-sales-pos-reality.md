@@ -68,13 +68,18 @@ World / Parameters → Potential Demand → Actual Demand → Actual Sales → O
 
 One addition specific to this document: generating a given day's Actual Sales may depend on stock *entering* that day (itself a consequence of prior days' sales and replenishment, Document 8's ordinary temporal dynamics) — that's a legitimate sequential dependency across time, not a violation of the acyclicity rule, which concerns generation *within* a single causal step, not the normal day-over-day evolution of stock levels.
 
-**Confirmed shape for that temporal dependency, as guidance for Document 8:** rather than treating inventory, demand, and sales as three independently-generated quantities that happen to relate, the natural model is a per-day state transition:
+**Confirmed shape for that temporal dependency, as guidance for Document 8:** Demand[t] and opening Inventory[t] are independent inputs — neither is derived from the other — and only converge at Sales[t]:
 
 ```text
-Inventory[t] → Demand[t] → Sales[t] → Inventory[t+1]
+World / Parameters ──→ Demand[t]
+World / Parameters ──→ Inventory[t]   (carried forward from the previous day)
+
+Demand[t]  +  Inventory[t]  ──→  Sales[t] = min(Demand[t], Inventory[t])
+
+Sales[t]  +  Deliveries[t]  ──→  Inventory[t+1]
 ```
 
-Stated this way, there's no circularity at all — each day's stock is simply the previous day's state, carried forward and updated by that day's sales (and any replenishment arriving). **Document 8 remains the sole authoritative place for inventory mechanics.** This document deliberately stops at treating "stock available at start of day" as an opaque input precisely so that inventory rules don't get quietly designed piecemeal inside Sales — Document 8 should design the full state-transition mechanism, not inherit fragments of it from here.
+Stated this way, there's no circularity at all — Demand[t] and Inventory[t] are each generated independently, from exogenous world parameters and the previous day's carried-forward state respectively; each day's stock is simply the previous day's state, updated by that day's sales (and any replenishment arriving). **Document 8 remains the sole authoritative place for inventory mechanics.** This document deliberately stops at treating "stock available at start of day" as an opaque input precisely so that inventory rules don't get quietly designed piecemeal inside Sales — Document 8 should design the full state-transition mechanism, not inherit fragments of it from here.
 
 ## Observed POS — not this document's job, boundary restated
 
@@ -113,7 +118,7 @@ Resolved through review:
 | Partial-fulfillment refusal? | Not modeled — deliberate, to keep it clear later whether analytical-system problems trace to the core inference problem or to unnecessary simulator complexity |
 | Granularity | Store × SKU × day; ticket-level generation is M2B's job |
 | Returns, voids, basket structure? | Deferred for the initial vertical slice — a known simplification, not an assumption they don't exist |
-| Temporal dependency on stock-at-start-of-day | Framed as a per-day state transition (`Inventory[t] → Demand[t] → Sales[t] → Inventory[t+1]`), not circularity; Document 8 remains sole authority on inventory mechanics |
+| Temporal dependency on stock-at-start-of-day | Framed as a per-day state transition — Demand[t] and Inventory[t] are independent inputs converging at Sales[t] = min(Demand[t], Inventory[t]); Sales[t] + Deliveries[t] produce Inventory[t+1] — not circularity; Document 8 remains sole authority on inventory mechanics |
 
 ## Explicitly out of scope for this document
 

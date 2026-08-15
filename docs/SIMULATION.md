@@ -34,7 +34,7 @@ Phase 1 **may** contain genuine business phenomena: a product genuinely goes out
 
 Phase 1 **must not** contain data-system corruption of any kind — no missing/duplicated rows, no broken identifiers, no delayed feeds, no malformed schemas, no ETL failures, no synchronization errors. Phase 1 has no concept of "retailer profile," "feed," "schema," or "fault." It doesn't know it is being observed.
 
-Phase 1 reports everything in one fixed, canonical semantic and unit convention (see [Canonical semantics](#canonical-semantics-open-decision)) at a time resolution fine enough to support whatever Phase 2 later needs to aggregate or disaggregate.
+Phase 1 reports everything in one fixed, canonical semantic and unit convention (see [Canonical semantics](#canonical-semantics-resolved)) at a time resolution fine enough to support whatever Phase 2 later needs to aggregate or disaggregate.
 
 ### Phase 2 — Retailer Feed Simulation
 
@@ -124,20 +124,23 @@ World Snapshot v001
 
 All four scenarios derive from the *same* underlying world, so any difference in downstream recommendation accuracy is attributable to data quality, not to a different simulated reality. Without this, questions like "how much does weekly vs. daily POS hurt detection accuracy?" would be confounded — you'd never know whether a result difference came from the data-quality change or from an incidentally different world.
 
-## Canonical semantics (open decision)
+## Canonical semantics (resolved)
 
 Because Phase 2 may intentionally introduce semantic distortions — e.g. reporting `units` as individual items for one retailer but as case-packs for another, or `stock` as store-only for one retailer but store+backroom for another — Phase 1 must define its own semantics in one fixed, unambiguous convention. Otherwise Phase 2's distortions aren't well-defined transformations, and the evaluation harness can't reverse them to score against truth.
 
-**This document does not decide the final canonical units.** That decision (e.g., "all quantities are individual units; all stock figures are store-front-only") must be made explicitly before Phase 1's demand/sales/inventory generators are implemented, and recorded here once made.
+**Resolved in `docs/world/02-product-universe.md`:** units are consumer-sellable eaches at the SKU level — whatever a consumer picks up as a single retail item counts as one unit, matching how a POS scan actually works, regardless of what's physically packed inside it. A separate `units_per_case` attribute carries the manufacturer-to-retailer shipping multiplier, so "units" and "cases" are never conflated. Stock (`docs/world/08-inventory.md`) follows the same convention and represents store-front-only sellable stock, not combined store+backroom holdings.
 
 ## Unresolved design decisions
 
 Deliberately left open, to be decided during the relevant implementation milestone rather than guessed here:
 
-- **Phase 1 temporal resolution.** Daily is the current minimum candidate, but the final design must account for Phase 2 needing to simulate ticket-level POS for some retailers — likely via a Phase 2 disaggregation step rather than raising Phase 1's own resolution. Not yet decided.
 - **World snapshot format and storage location.** A persisted, versioned snapshot is required (see above); the concrete file format, partitioning, and versioning mechanism are not decided here.
 - **Versioning strategy.** How snapshot versions are identified, compared, and reproduced (e.g. semantic versioning vs. content hash vs. simple incrementing ID) is not decided here.
-- **Final canonical semantic/unit conventions.** See [Canonical semantics](#canonical-semantics-open-decision) above.
+
+**Resolved since this list was first written** — kept noted here for continuity rather than silently removed:
+
+- **Phase 1 temporal resolution** — daily granularity (store × SKU × day), per Documents 6–9's consistent, converged usage throughout the Ground Truth design; consistent with CLAUDE.md's daily-minimum requirement. Ticket-level POS remains a Phase 2 disaggregation concern, not a reason to raise Phase 1's own resolution.
+- **Canonical semantic/unit conventions.** See [Canonical semantics](#canonical-semantics-resolved) above.
 
 ## What the hidden state is for
 

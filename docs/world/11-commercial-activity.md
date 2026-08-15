@@ -4,7 +4,7 @@
 
 ## What this document defines (and what it doesn't)
 
-Defines: the commercial agent as a human participant in the business process, not a data feed — store visits (policy vs. actual events, mirroring Document 6's demand and Document 9's ordering structure), the observations and actions a visit can produce, retailer-level interactions, and why none of this becomes Ground Truth by virtue of being recorded. Also disambiguates this document's "feedback/intervention" from the unrelated, later concept of recommendation feedback.
+Defines: the commercial agent as a human participant in the business process, not a data feed — store visits (policy vs. actual events, mirroring Document 6's demand and Document 9's ordering structure), the observations and actions a visit can produce, retailer-level interactions, and why none of this becomes Ground Truth by virtue of being recorded. Also disambiguates this document's "field intervention" from the unrelated, later concept of recommendation feedback.
 
 Does **not** define: the agent-observation fidelity/noise model — how accurate, biased, or systematic an agent's stated observation is relative to reality (flagged as an architectural question this document surfaces but doesn't resolve — see below); recommendation feedback (the M7 Human Feedback Loop concept — a different thing entirely, addressed explicitly below to prevent confusion); a general CRM-style account-management model.
 
@@ -60,7 +60,7 @@ Commercial Activity
        │
        ├── Retailer interaction
        │
-       └── Feedback / intervention
+       └── Field intervention
 ```
 
 **Governing principle for all three:** this document exists because commercial activity produces useful business observations and interventions — not because a CPG company has meetings and sales calls that deserve modeling for their own sake. Every branch below is scoped to what feeds the observation/intervention chain, deliberately not a general CRM model (contact logs, meeting cadences, relationship-health scoring, and similar are out of scope entirely).
@@ -120,11 +120,13 @@ The agent is a lens on existing reality, never a second reality.
 
 **Confirmed: included now, not deferred.** An agent is a real participant in the business, not merely a sensor — a commercial representative visiting a store can change the state of the business, and modeling agents as passive observers only would be less realistic, not more conservative.
 
-**The strong rule that makes this safe: an intervention must flow through an existing causal pathway, never create a new one.**
+**An action is distinct from a field intervention (below), and the two terms are not interchangeable.** An action directly changes Phase 1 state by flowing through an existing mechanism (an inventory adjustment, triggering an order); a field intervention is an agent reacting to or escalating a situation — flagging a concern to the retailer, for instance — without itself changing Phase 1 state through one of those mechanisms. `field intervention` is not a generic label for whatever an agent does during a visit.
+
+**The strong rule that makes actions safe: an action must flow through an existing causal pathway, never create a new one.**
 
 ```text
 Correct:
-Agent → field intervention → Order (Document 9) → Delivery → Physical inventory
+Agent → action → Order (Document 9) → Delivery → Physical inventory
 
 Wrong:
 Agent → magically increases inventory
@@ -136,11 +138,11 @@ Two concrete instances, both routed through mechanisms already fully defined els
 
 **Proposed:** retailer-level (not store-level) commercial contact — a meeting, call, or negotiation with a retailer's buyer or category manager, distinct from any specific store visit. Minimal structure only: that an interaction occurred, with which retailer, and roughly why (e.g., trade-term negotiation, new-product presentation, relationship maintenance). No contact logs, no meeting notes, no attendee lists, no relationship-health metrics — anything resembling a full account-management system is explicitly excluded, per the governing principle above.
 
-## Feedback / intervention — not the same thing as recommendation feedback
+## Field intervention — not the same thing as recommendation feedback
 
 **Important disambiguation, since the name collides with an already-established, unrelated concept.** `docs/DATA_MODEL.md` and the project's Human Feedback Loop milestone (M7) already define "Feedback" as a commercial agent's response to a *Decision Platform recommendation* (confirmed / rejected / already resolved / wrong data / etc.). **That concept does not exist in Phase 1 at all** — Phase 1 has no notion of a Decision Platform, an analytical model, or a recommendation; it doesn't know it's being observed, let alone acted on by a downstream system.
 
-This document's "feedback/intervention" is a different, earlier, purely Phase 1 phenomenon: an agent encountering a real-world business situation during a visit or interaction and reacting to it directly — flagging a concern to the retailer, escalating an issue, making a judgment call — independent of any recommendation system. Proposed name change to avoid the collision outright: **`field intervention`**, not "feedback," reserving "feedback" exclusively for the M7 concept it already names.
+This document's `field intervention` is a different, earlier, purely Phase 1 phenomenon: an agent encountering a real-world business situation during a visit or interaction and reacting to it directly — flagging a concern to the retailer, escalating an issue, making a judgment call — independent of any recommendation system. The name avoids the collision outright: **`field intervention`**, not "feedback," reserving "feedback" exclusively for the M7 concept it already names.
 
 ## The acyclicity / no-lookahead rule, reaffirmed
 

@@ -91,6 +91,8 @@ Promotion
 
 **Proposed:** the promotional modifier in Document 6's multiplicative demand structure is populated here — but **only when a promotion is actually executed, not merely planned.** A planned-but-unexecuted promotion contributes nothing to demand.
 
+**Confirmed: `discount_depth` feeds this promotional demand modifier only — it does not feed Document 6's baseline price-elasticity term.** The promotion is modeled as an independent demand effect (attention, display, purchase timing, and similar), not as a temporary change to the price Document 6's elasticity relationship responds to. Wiring `discount_depth` into both mechanisms would double-count the same promotional effect; keeping them separate also means `discount_depth` never has to reconstruct an actual charged consumer price, consistent with retail shelf pricing remaining out of scope (see [below](#retail-shelf-pricing--still-out-of-scope-not-merely-deferred)).
+
 **Confirmed: a three-phase curve, not a flat step function.**
 
 ```text
@@ -121,7 +123,7 @@ Explicit, so the boundary doesn't erode one document at a time: `planned_terms` 
 
 ## Retail shelf pricing — still out of scope, not merely deferred
 
-Worth being explicit, since this document is the natural place price questions resurface: Document 2's price record is the **wholesale** price NovaFoods charges the retailer — a different thing entirely from the **retail shelf price** a consumer sees. Continuous, non-promotional retail shelf pricing is not modeled anywhere in this project's current scope — not deferred to a future document, genuinely out of scope. This document only introduces a promotional-period `discount_depth` for the promotion's own window, which is enough to drive the demand and ordering effects above without requiring a full always-on retail pricing model underneath it.
+Worth being explicit, since this document is the natural place price questions resurface: Document 2's price record is the **wholesale** price NovaFoods charges the retailer — a different thing entirely from the **retail shelf price** a consumer sees. Continuous, non-promotional retail shelf pricing is not modeled anywhere in this project's current scope — not deferred to a future document, genuinely out of scope. This document only introduces a promotional-period `discount_depth` for the promotion's own window, which is enough to drive the demand and ordering effects above without requiring a full always-on retail pricing model underneath it. **`discount_depth` is not intended to reconstruct a fully modeled retail shelf price** — it is an input to the promotional demand modifier only (see [Effect 1](#effect-1-demand-modifier-fills-document-6s-slot) above), which is what keeps this document from quietly pulling a retail-pricing system back into Ground Truth through the back door.
 
 ## Events — folded into Promotion, not a separate entity
 
@@ -176,6 +178,7 @@ Resolved through review:
 | Separate Event entity | No — deferred, not ruled out; introduce one later only against a real requirement that doesn't fit Promotion |
 | Retail shelf pricing | Remains genuinely out of scope |
 | Promotion entity scope | Core fields only (scope, planned dates, planned terms, origin, execution state) — not a full trade-promotion-management system |
+| `discount_depth` vs. price elasticity | `discount_depth` feeds only the promotional demand modifier (Effect 1) — never Document 6's baseline price-elasticity term. Keeps the two mechanisms independent (avoids double-counting) and keeps retail shelf pricing out of Ground Truth |
 
 ## Explicitly out of scope for this document
 

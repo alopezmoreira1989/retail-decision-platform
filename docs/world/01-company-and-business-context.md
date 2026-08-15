@@ -97,7 +97,7 @@ This is a business fact about the manufacturer–retailer relationship, not a Ph
 | Layer | Examples |
 |---|---|
 | **Latent reality** (never directly observed by NovaFoods, in any world) | Consumer demand, physical inventory |
-| **Observable signals** (what NovaFoods actually receives — Phase 2's RAW output) | POS / sell-out, orders, reported inventory (if provided), assortment, promotions, store/product master, events, commercial-agent visit feedback |
+| **Observable signals** (what NovaFoods actually receives — Phase 2's RAW output) | POS / sell-out, orders, reported inventory (if provided), assortment, promotions, store/product master, events, commercial-agent field intervention |
 | **Inference** (Decision Platform output, not input) | Expected demand, likely availability, likely inventory state, underperformance, order opportunity |
 | **Action** | Commercial recommendation |
 
@@ -169,7 +169,7 @@ Commercial Visit
     ├── inventory observation
     ├── assortment observation
     ├── promotion observation
-    ├── recommendation feedback
+    ├── field intervention
     └── other qualitative information
 ```
 

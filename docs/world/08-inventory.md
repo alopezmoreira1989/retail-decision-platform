@@ -58,7 +58,7 @@ Reported inventory ≠ necessarily physical inventory
 
 ## Formalizing `physical_inventory`
 
-**Proposed:** `physical_inventory(store, sku, day)`, denominated in the same canonical units as everything else (Document 2's consumer sellable eaches) — already anticipated in Document 1 ("proposed to be internally denominated in the same 'units' convention as sales, for consistency"), now confirmed rather than merely proposed. Daily granularity, snapshot-based — consistent with the `Inventory[t] → Demand[t] → Sales[t] → Inventory[t+1]` state-transition model Document 7 already committed to.
+**Proposed:** `physical_inventory(store, sku, day)`, denominated in the same canonical units as everything else (Document 2's consumer sellable eaches) — already anticipated in Document 1 ("proposed to be internally denominated in the same 'units' convention as sales, for consistency"), now confirmed rather than merely proposed. Daily granularity, snapshot-based — consistent with the state-transition model Document 7 already committed to (Demand[t] and Inventory[t] as independent inputs converging at Sales[t]; Sales[t] plus Deliveries[t] producing Inventory[t+1]).
 
 **Convention: represents sellable stock, not a store's total physical holdings.** This lines up with CLAUDE.md's own canonical-unit example ("store-front-only stock") and matters directly for Phase 2 realism later: a retailer that reports combined store+backroom figures isn't lying, it's using a different — and, per Document 1's canonical-semantics principle, reversible — convention. That distortion is flagged for M2B, not designed here; Phase 1 only needs to commit to one fixed meaning, which this section does.
 

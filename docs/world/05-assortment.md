@@ -81,6 +81,12 @@ Per the project's existing business-reality/data-error distinction, "a store sta
 | A store discontinues carrying a product locally | A retailer's planogram file is stale or late |
 | A store's planogram reset changes its category mix | A retailer misreports what a store carries due to a system error |
 
+**The acyclicity rule applies here too — added retroactively, since this document predates Document 6's generalization of it.** A store adding or discontinuing a SKU must be generated from exogenous or already-generated-upstream causes (store attributes, retailer decisions, a planogram reset schedule) — never from that store-SKU pair's own downstream Sales or Demand history. It would be tempting to implement "drop this SKU once its sales have been low for a while" as a trigger, but that's precisely the violation Document 6 later named: generating an earlier-in-the-chain quantity (assortment, which itself gates whether Sales can happen at all) from a later one (Sales) that depends on it. The same canonical ordering applies here as everywhere downstream of it:
+
+```text
+World / Parameters → Physical assortment → Sell-eligibility → ... → Sales
+```
+
 **Confirmed: no third assortment state — effective dating instead.** A store-SKU pair carries `effective_from` and `effective_to` (nullable):
 
 ```text

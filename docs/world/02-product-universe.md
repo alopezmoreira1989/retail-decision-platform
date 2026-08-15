@@ -137,11 +137,11 @@ NovaFoods
     ↓  wholesale list price   (modeled now)
 Retailer
     ↓  negotiated commercial terms / actual purchase price   (NOT modeled — see below)
-    ↓  retail shelf price     (Document 6 / Document 10)
+    ↓  retail shelf price     (NOT modeled — out of scope, confirmed in Document 10)
 Consumer
 ```
 
-**Confirmed: retailer-specific negotiated pricing and commercial terms are explicitly out of scope**, now and for the foreseeable scope of this project — they add real complexity without being necessary to the platform's central question. Only the single, country-specific wholesale list price (versioned over time) is modeled. Retail shelf pricing, promotional price changes, and price elasticity of demand remain deferred to Document 6 (Demand) and Document 10 (Promotions & Events).
+**Confirmed: retailer-specific negotiated pricing and commercial terms are explicitly out of scope**, now and for the foreseeable scope of this project — they add real complexity without being necessary to the platform's central question. Only the single, country-specific wholesale list price (versioned over time) is modeled. Continuous retail shelf pricing is genuinely out of scope for this project, not deferred — confirmed in Document 10. Price elasticity of demand is addressed at a qualitative level in Document 6 (a directional input on potential demand); promotional price changes are addressed via Document 10's promotion-period `discount_depth` attribute — the exact functions and parameters for both remain implementation decisions.
 
 ## Illustrative example (not a final catalogue)
 

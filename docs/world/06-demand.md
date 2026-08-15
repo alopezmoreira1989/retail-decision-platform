@@ -64,6 +64,8 @@ Sales
 
 **Potential demand** is the relatively stable, structural capacity a store-SKU pair has to sell — driven by store and product characteristics (below). **Actual demand** is what a specific day actually produces once seasonal, regional, promotional, and idiosyncratic (noise) factors are applied. Only the *shape* of this decomposition (multiplicative, staged) is proposed here — exact functional forms, coefficients, and distributions are implementation decisions, consistent with how Documents 4 and 5 treated their own generative formulas.
 
+**Note the price-elasticity term is deliberately absent from the potential → actual multiplier list above.** Price is baked into potential demand once, through the product popularity factor ([below](#product-level-demand-potential)), and must not reappear as a second, separate multiplier at the actual-demand stage — only the seasonal/regional/promotional/noise modifiers apply there.
+
 ## Store-level demand potential
 
 **Proposed:** `store_scale_class` and `format` (Document 4) are inputs to potential demand, but not the whole story. Operationalizing Document 4's non-determinism requirement concretely: **each store gets its own individual baseline demand level, drawn from a tier-appropriate range or distribution — not a fixed value per tier.** Two stores in the same `store_scale_class` should show real, substantial spread in their actual potential demand. If they didn't, `store_scale_class` would be fully recoverable from observed sales alone, which is exactly what Document 4 ruled out.
@@ -72,7 +74,9 @@ Sales
 
 **Proposed:** each SKU carries its own individual popularity factor, not fully determined by category, brand, or price alone — two SKUs in the same subcategory are expected to sell differently in practice, and that variation should exist independent of any single attribute.
 
-**Price**, per Document 2's deferred question, is proposed as a directional input only: higher price generally associated with lower demand, all else equal. The actual elasticity function (magnitude, curve shape, category-specific sensitivity) is an implementation decision, not designed here — this document only closes the loop by stating where price plugs into the model.
+**Price** — meaning NovaFoods' modeled wholesale/list price (Document 2), not a retail shelf price, which this project does not model (confirmed in Document 10) — is proposed as a directional input to *potential* demand only: higher price generally associated with lower baseline demand, all else equal. The actual elasticity function (magnitude, curve shape, category-specific sensitivity) is an implementation decision, not designed here.
+
+**Confirmed: this price relationship is structurally independent from Document 10's promotional demand modifier.** `discount_depth` drives the promotional modifier applied to *actual* demand (see [Promotional lift](#promotional-lift--flagged-not-designed) below) — it does not feed back into this baseline price-elasticity term. Wiring `discount_depth` into both would double-count the same promotional effect: once as a lower effective price, once as a promotional lift.
 
 ## Seasonality — distinct from Document 2's `is_seasonal`
 
@@ -90,7 +94,7 @@ That's the whole requirement this document settles. It deliberately does **not**
 
 ## Promotional lift — flagged, not designed
 
-**Proposed:** the demand model's multiplicative structure leaves an explicit slot for a promotional modifier, but its mechanics (lift magnitude, duration, decay) are entirely Document 10's job. Mentioned here only so Document 10 has a defined place to plug into, not to pre-design it.
+**Proposed:** the demand model's multiplicative structure leaves an explicit slot for a promotional modifier, but its mechanics (lift magnitude, duration, decay) are entirely Document 10's job. Mentioned here only so Document 10 has a defined place to plug into, not to pre-design it. **This slot is independent of the price input above** — it represents promotion-specific effects (attention, display, purchase timing) rather than a price change, and must not be merged with the price-elasticity term.
 
 ## Explicitly deferred: product substitution and cannibalization
 
@@ -136,10 +140,10 @@ Resolved through review:
 | Potential → actual split? | Yes, kept — separates "structural capacity" from "what happened this day," which is exactly what keeps the ground truth from being trivially recoverable from sales |
 | No shopper-journey decomposition | Confirmed — a single demand figure per store-SKU-day |
 | Store/product-level individual variation | Confirmed required, not just tier/category averages |
-| Price | Directional input only; elasticity mechanics are implementation |
+| Price | Directional input to potential demand only (modeled wholesale/list price, not retail shelf price); elasticity mechanics are implementation |
 | Seasonality vs. `is_seasonal` | Confirmed distinct — intensity variation vs. existence window |
 | Regional correlation | Confirmed as a **statistical property** ("same-region stores correlated, cross-region less so"), with the concrete definition of `region` deliberately left to Document 4/implementation |
-| Promotional lift | Structurally accommodated, not designed — Document 10's job |
+| Promotional lift | Structurally accommodated, not designed — Document 10's job; structurally independent from the price-elasticity term, so `discount_depth` is never also wired into price (avoids double-counting) |
 | Substitution/cannibalization? | Deferred explicitly — a known limitation, not an assumption that it doesn't exist |
 | Causal acyclicity rule | **Generalized**: Phase 1 generators must not consume any Phase 1 output downstream of the variable being generated — not just "don't read sales," which could be technically satisfied while violated via a derived feature |
 
