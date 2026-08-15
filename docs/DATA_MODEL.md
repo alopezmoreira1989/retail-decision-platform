@@ -17,7 +17,7 @@ Several entities here span the Phase 1 / Phase 2 boundary described in [SIMULATI
 - **Calendar / Event** — dates, holidays, and other temporal markers (e.g. regional events) that affect demand.
 - **Sale (POS / sell-out)** — an observed unit of sales activity: ticket-level, daily, or weekly aggregate depending on retailer.
 - **Order** — a replenishment order placed for a store/product.
-- **Inventory position** — reported stock on hand for a store/product at a point in time.
+- **Inventory position** — Phase 1: `physical_inventory`, the true latent stock for a store/product on a given day, never directly observed. Phase 2: retailer-reported inventory, an imperfect observation gated by the retailer's `shares_inventory_visibility` — see [docs/world/08-inventory.md](world/08-inventory.md).
 - **Commercial Agent** — a fictional person who reviews recommendations and may visit stores.
 - **Store Visit** — a recorded (simulated) visit by a commercial agent, which may itself be a source of ground-truth-adjacent signal or of feedback.
 - **Recommendation** — a generated, prioritized, explainable output of the platform, tied to one or more underlying findings.
