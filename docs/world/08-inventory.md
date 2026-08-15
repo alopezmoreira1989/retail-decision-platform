@@ -116,7 +116,7 @@ Retailer-reported inventory = 15
 Observed POS = 0
 ```
 
-That's already a genuine phantom-inventory-style problem — no shelf/backroom split required to get there. Both remain a documented **future extension**, not an assumption that real stores don't experience them:
+That's already a genuine Reported/Physical Inventory Divergence — no shelf/backroom split required to get there. Both remain a documented **future extension**, not an assumption that real stores don't experience them:
 
 ```text
 physical_inventory = 20
