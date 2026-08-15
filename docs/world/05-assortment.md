@@ -116,10 +116,10 @@ Deliberately computed, not stored — storing it as its own field would create a
 **Confirmed as an explicit fourth concept**, not folded into sell-eligibility. A SKU is available if it's sell-eligible *and* there is actual physical stock right now:
 
 ```text
-Available = sell-eligible AND true_stock(store, sku, date) > 0
+Available = sell-eligible AND physical_inventory(store, sku, date) > 0
 ```
 
-`true_stock` is Document 8's job entirely — nothing about inventory mechanics is designed here. This document only insists that **Availability is named as its own concept**, distinct from sell-eligibility, because collapsing them would silently reintroduce the exact conflation this document exists to prevent: a sell-eligible SKU with zero stock is *not* available, and that's a completely different situation from a SKU that was never sell-eligible in the first place. See [Fundamental invariant](#fundamental-invariant-assortment--availability) below.
+`physical_inventory` is Document 8's job entirely — nothing about inventory mechanics is designed here. This document only insists that **Availability is named as its own concept**, distinct from sell-eligibility, because collapsing them would silently reintroduce the exact conflation this document exists to prevent: a sell-eligible SKU with zero stock is *not* available, and that's a completely different situation from a SKU that was never sell-eligible in the first place. See [Fundamental invariant](#fundamental-invariant-assortment--availability) below.
 
 ## The four concepts, side by side
 
@@ -187,7 +187,7 @@ Product lifecycle: ACTIVE · Store lifecycle: OPEN
         ↓
 sell-eligible: true
         ↓
-true_stock (Document 8, not designed here): suppose 0 today
+physical_inventory (Document 8, not designed here): suppose 0 today
         ↓
 available: false — a stockout, not an assortment gap
         ↓
@@ -217,7 +217,7 @@ Resolved through review:
 
 **Document 7:** sales/POS mechanics.
 
-**Document 8:** true stock and stockouts — `true_stock`, the mechanic Availability depends on, is entirely Document 8's job, not designed here.
+**Document 8:** true stock and stockouts — `physical_inventory`, the mechanic Availability depends on, is entirely Document 8's job, not designed here.
 
 **M2B / Phase 2:** retailer-reported assortment as an actual feed, its cadence, and its fault characteristics.
 

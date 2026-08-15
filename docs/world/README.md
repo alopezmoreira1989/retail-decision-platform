@@ -24,7 +24,7 @@ Later documents may depend on earlier ones — the order below is a starting poi
 | 5 | [Assortment](05-assortment.md) | **Approved** |
 | 6 | [Demand](06-demand.md) | **Approved** |
 | 7 | [Sales / POS Reality](07-sales-pos-reality.md) | **Approved** |
-| 8 | Inventory | Not started |
+| 8 | [Inventory](08-inventory.md) | **Approved** |
 | 9 | Orders / Replenishment | Not started |
 | 10 | Promotions & Events | Not started |
 | 11 | Commercial Activity | Not started |
