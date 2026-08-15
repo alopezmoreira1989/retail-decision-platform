@@ -1,6 +1,6 @@
 # Document 3 — Retailer Universe
 
-**Status: Approved.** This is a planning document. Nothing here is final until reviewed and approved — see [README.md](README.md) for the review process. Document 4 (Store Universe) begins only once explicitly started as its own task.
+**Status: Approved.** This is a planning document. Nothing here is final until reviewed and approved — see [README.md](README.md) for the review process.
 
 ## What is a retailer, in the NovaFoods world?
 
@@ -61,11 +61,15 @@ Also worth being explicit: NovaFoods still needs its own canonical identifier fo
 
 No claims about how each type behaves downstream (assortment breadth, basket size, pack-size preference, etc.) are made here — that would be inventing content not established by any prior document. Type is a classification only; its downstream effects, if any, are for Document 5/6 to establish on their own terms.
 
+**Intentionally distinct from Document 4's Store Format.** Retailer Type classifies the chain; Store Format (Document 4) classifies the individual location, and the two lists don't match one-for-one (e.g., "Club/Warehouse" here vs. "Wholesale" there) because a single retailer can operate multiple store formats under one chain-level type. This is a deliberate difference in level, not an inconsistency to reconcile — the two taxonomies are left independent on purpose.
+
 ## Retailer-level "Tier" was removed — corrected to store-level
 
 An earlier revision of this document proposed a retailer-level Tier (National/Strategic, Regional, Small/Independent), justified partly by "reflecting store count" and implying broader assortment for higher tiers. **That's the wrong level of granularity.** A single retailer chain can contain enormous variance across its own store fleet — a flagship location and a small-format location of the *same* chain don't have comparable sales volume or assortment capacity. Collapsing that into one retailer-level attribute would misrepresent the thing that actually matters.
 
 **Corrected:** whatever classification drives expected sales volume and assortment magnitude belongs at the **store level** — Document 4's job, not this document's. Document 3 makes no claim about retailer size beyond the aggregate, order-of-magnitude store count already noted below; it does not attempt to capture volume or assortment-driving classification at the retailer level at all.
+
+**Resolved in Document 4:** this is now concretely `store_scale_class` — a Phase 1 latent attribute on the Store entity (see [docs/world/04-store-universe.md#store-classification-extending-the-latent--observable--inference-framework](04-store-universe.md#store-classification-extending-the-latent--observable--inference-framework)), itself part of a three-way Latent/Observable/Inference split (a retailer's own reported store tier is a separate, inconsistent Phase 2 signal; reconciling it into a universal classification is an Analytical Engine problem). Named here for closure, not re-explained — Document 4 is authoritative on its definition and mechanics.
 
 This doesn't rule out NovaFoods still having *some* retailer-level commercial-relationship concept (e.g., which accounts get dedicated coverage) — but that's Document 11's territory if and when it's actually needed there, not something to pre-empt here under a different name.
 
@@ -128,7 +132,7 @@ None of these block approval — they're implementation-detail-level or Document
 
 ## Explicitly out of scope for this document
 
-**Document 4:** individual stores, store geography, store-level formats, any store-level exception to `shares_inventory_visibility` should one ever prove necessary, and — most importantly for this revision — the store-level classification that actually drives expected sales volume and assortment magnitude (what a retailer-level "Tier" was standing in for, incorrectly, in the previous revision of this document).
+**Document 4:** individual stores, store geography, store formats, any store-level exception to `shares_inventory_visibility` should one ever prove necessary, and — what a retailer-level "Tier" was standing in for, incorrectly, in an earlier revision of this document — `store_scale_class`, the store-level classification that actually drives expected sales volume and assortment magnitude.
 
 **Document 5:** assortment — which retailers/stores actually carry which SKUs.
 
