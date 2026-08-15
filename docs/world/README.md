@@ -21,7 +21,7 @@ Later documents may depend on earlier ones — the order below is a starting poi
 | 2 | [Product Universe](02-product-universe.md) | **Approved** |
 | 3 | [Retailer Universe](03-retailer-universe.md) | **Approved** |
 | 4 | [Store Universe](04-store-universe.md) | **Approved** |
-| 5 | Assortment | Not started |
+| 5 | [Assortment](05-assortment.md) | **Approved** |
 | 6 | Demand | Not started |
 | 7 | Sales / POS Reality | Not started |
 | 8 | Inventory | Not started |
