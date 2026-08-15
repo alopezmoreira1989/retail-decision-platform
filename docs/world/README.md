@@ -19,7 +19,7 @@ Later documents may depend on earlier ones — the order below is a starting poi
 |---|---|---|
 | 1 | [Company & Business Context](01-company-and-business-context.md) | **Approved** |
 | 2 | [Product Universe](02-product-universe.md) | **Approved** |
-| 3 | Retailer Universe | Not started |
+| 3 | [Retailer Universe](03-retailer-universe.md) | **Approved** |
 | 4 | Store Universe | Not started |
 | 5 | Assortment | Not started |
 | 6 | Demand | Not started |
