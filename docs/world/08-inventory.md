@@ -76,7 +76,17 @@ physical_inventory[t+1] = physical_inventory[t] − Actual Sales[t] + Deliveries
 
 ## Unmet demand and true stockout events — generated here, consumed by evaluation later
 
-**Confirmed:** whenever `Actual Demand[t] > Actual Sales[t]`, the difference is unmet demand for that store-SKU-day, and a day where `physical_inventory[t] = 0` with positive unmet demand is a **true stockout event**. This directly extends what the project's own early planning already committed to (the original "Implement sales generation" work explicitly called for stockout events to be "recorded and queryable by the evaluation harness only") — this document is where that commitment gets formalized against the now-fully-developed Demand/Sales/Inventory chain.
+**Confirmed:** whenever `Actual Demand[t] > Actual Sales[t]`, the difference is unmet demand for that store-SKU-day, and **any day with positive unmet demand is a true stockout event** — regardless of whether opening `physical_inventory[t]` was exactly zero or merely insufficient to cover that day's demand. This directly extends what the project's own early planning already committed to (the original "Implement sales generation" work explicitly called for stockout events to be "recorded and queryable by the evaluation harness only") — this document is where that commitment gets formalized against the now-fully-developed Demand/Sales/Inventory chain.
+
+**Stated as three cases, so the boundary is unambiguous:**
+
+```text
+physical_inventory > 0  AND  demand > physical_inventory   → stockout (partial coverage, demand still unmet)
+physical_inventory = 0  AND  demand > 0                    → stockout (no coverage at all)
+physical_inventory > 0  AND  demand <= physical_inventory  → no stockout (fully met)
+```
+
+`stockout[t]` is not "the store started the day with zero inventory" — it is "positive demand went unmet because available inventory, whatever it was, wasn't enough." A store that opens with 60 units against demand of 100 is just as much a stockout day as a store that opens with 0:
 
 ```text
 Demand = 100
@@ -86,7 +96,7 @@ Sales = 60
         ↓
 Unmet demand = 40
         ↓
-Stockout event = TRUE
+Stockout event = TRUE   (opening inventory was 60, not 0 — the positive unmet demand is what triggers this, not an empty shelf at the start of the day)
 ```
 
 **A deliberate separation of responsibilities, stated explicitly so it doesn't get blurred later:** the event *exists* in the Ground Truth because it's a direct, mechanical consequence of the physical inventory state defined in this document — that part belongs here. *How* the evaluation framework later consumes that event (what "correctly identified" means, what counts as a scoring match, precision/recall definitions) is a separate concern for whenever evaluation architecture is designed, and is explicitly not decided in this document. Generating the event and deciding how it's scored are two different jobs; this document only does the first.
@@ -139,11 +149,14 @@ Day 1:  physical_inventory[start] = 60
         Deliveries = 0
         physical_inventory[end] = 60 − 60 + 0 = 0
         → unmet demand = 40 → true stockout event recorded (evaluation-only)
+          (opening inventory was 60, not 0 — positive unmet demand alone
+          is what makes this a stockout day, per the definition above)
 
 Day 2:  physical_inventory[start] = 0
         Actual Demand = 45 → Actual Sales = min(45, 0) = 0
         Deliveries = 80 (Document 9, not designed here)
         physical_inventory[end] = 0 − 0 + 80 = 80
+        → unmet demand = 45 → also a true stockout event recorded
 ```
 
 ## Terminology cleanup

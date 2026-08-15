@@ -50,6 +50,7 @@ A retailer is split across two layers, matching the Phase 1 / Phase 2 boundary i
   - reporting frequency per feed (daily, weekly, delayed-by-N-days)
   - identifier scheme (internal SKU vs. EAN/UPC, internal store code vs. address-based)
   - aggregation level (ticket-level vs. daily vs. weekly sell-out)
+  - delivery mechanism and file format per feed (e.g. file drop, API-like, DB-like; CSV, XLSX, Parquet — see [SIMULATION.md#source-artifacts-delivery-mechanism-and-landing](SIMULATION.md#source-artifacts-delivery-mechanism-and-landing))
   - typical data-quality issues and their rates (missingness, duplication, mapping errors)
   - which feeds are provided at all (e.g. a retailer that never sends promotion data)
 

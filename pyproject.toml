@@ -5,6 +5,10 @@ description = "Synthetic-data retail decision intelligence platform: simulation,
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
+dependencies = [
+    "numpy>=1.26",
+    "pyarrow>=14.0",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -22,6 +26,7 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = [
     "evaluation: offline experiments comparing against hidden simulator ground truth (not a correctness gate)",
 ]
