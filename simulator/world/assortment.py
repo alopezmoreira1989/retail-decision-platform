@@ -22,7 +22,7 @@ from __future__ import annotations
 from datetime import date
 
 from simulator.world.config import AssortmentWindow, SimulationConfig
-from simulator.world.entities import Sku, Store
+from simulator.world.entities import Sku, Store, sku_lifecycle_state, store_lifecycle_state
 
 
 def build_assortment_windows(
@@ -39,11 +39,18 @@ def is_physically_assorted(windows: list[AssortmentWindow], day: date) -> bool:
 
 
 def is_sell_eligible(windows: list[AssortmentWindow], store: Store, sku: Sku, day: date) -> bool:
-    """Document 5, Layer 4 -- derived, never stored."""
+    """Document 5, Layer 4 -- derived, never stored. Product/store
+    lifecycle state is day-dependent (Documents 2 and 4), resolved
+    fresh here rather than read from a static attribute -- see
+    entities.sku_lifecycle_state / store_lifecycle_state. A
+    discontinued SKU or a temporarily closed store fails this check
+    exactly the same way a non-assorted pair does; physical_assortment
+    itself is never touched by either.
+    """
     return (
         is_physically_assorted(windows, day)
-        and sku.lifecycle_state == "ACTIVE"
-        and store.lifecycle_state == "OPEN"
+        and sku_lifecycle_state(sku, day) == "ACTIVE"
+        and store_lifecycle_state(store, day) == "OPEN"
     )
 
 

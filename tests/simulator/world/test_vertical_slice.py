@@ -559,6 +559,175 @@ def test_future_promotion_does_not_affect_earlier_days():
 
 
 # ---------------------------------------------------------------------
+# SKU popularity / store baseline -- entity-level, not per-pair
+# (World Variety & Lifecycle checkpoint)
+# ---------------------------------------------------------------------
+
+
+def test_sku_popularity_ratio_constant_across_stores():
+    """sku_popularity[sku] is shared across every store that carries
+    it: the ratio of potential_demand between two stores must be
+    identical for every SKU both stores carry -- store_baseline only
+    cancels out of that ratio if popularity doesn't vary by pair.
+    """
+    result = run_slice(CONFIG)
+    by_pair = _by_pair(result.days)
+    shared_skus = ["SKU-001", "SKU-003"]  # both carried by STORE-002 and STORE-004
+    ratios = [
+        by_pair[("STORE-002", sku_id)][0].potential_demand
+        / by_pair[("STORE-004", sku_id)][0].potential_demand
+        for sku_id in shared_skus
+    ]
+    assert ratios[0] == pytest.approx(ratios[1], rel=1e-9)
+
+
+def test_store_baseline_ratio_constant_across_skus():
+    """store_baseline[store] is shared across every SKU that store
+    carries: the ratio of potential_demand between two SKUs must be
+    identical at every store that carries both.
+    """
+    result = run_slice(CONFIG)
+    by_pair = _by_pair(result.days)
+    stores_sharing_both = ["STORE-002", "STORE-004"]  # both carry SKU-001 and SKU-003
+    ratios = [
+        by_pair[(store_id, "SKU-001")][0].potential_demand
+        / by_pair[(store_id, "SKU-003")][0].potential_demand
+        for store_id in stores_sharing_both
+    ]
+    assert ratios[0] == pytest.approx(ratios[1], rel=1e-9)
+
+
+def test_different_skus_and_stores_can_have_different_potential_demand():
+    result = run_slice(CONFIG)
+    by_pair = _by_pair(result.days)
+    values = {
+        by_pair[("STORE-002", "SKU-001")][0].potential_demand,
+        by_pair[("STORE-002", "SKU-003")][0].potential_demand,
+        by_pair[("STORE-004", "SKU-001")][0].potential_demand,
+    }
+    assert len(values) > 1  # not everything collapsed to one shared value
+
+
+# ---------------------------------------------------------------------
+# Product lifecycle (Document 2) -- SKU-003, ACTIVE -> DISCONTINUED day 45
+# ---------------------------------------------------------------------
+
+DISCONTINUED_SKU = "SKU-003"
+DISCONTINUATION_DAY_INDEX = 54
+
+
+def _stores_carrying(sku_id: str) -> list[str]:
+    return [
+        store_id
+        for (store_id, s_id), windows in CONFIG.assortment.items()
+        if s_id == sku_id and windows
+    ]
+
+
+def test_discontinued_sku_becomes_non_sell_eligible_at_every_carrying_store():
+    result = run_slice(CONFIG)
+    by_pair = _by_pair(result.days)
+    carrying_stores = _stores_carrying(DISCONTINUED_SKU)
+    assert len(carrying_stores) > 1  # exercising the catalog-wide, multi-store pattern
+    for store_id in carrying_stores:
+        for row in by_pair[(store_id, DISCONTINUED_SKU)]:
+            if row.day_index < DISCONTINUATION_DAY_INDEX:
+                assert row.sku_lifecycle_state == "ACTIVE"
+            else:
+                assert row.sku_lifecycle_state == "DISCONTINUED"
+                assert row.sell_eligible is False
+                assert row.actual_demand == 0
+                assert row.sales == 0
+                assert row.order_placed_quantity == 0
+
+
+def test_discontinuation_does_not_change_physical_assortment():
+    result = run_slice(CONFIG)
+    rows = _by_pair(result.days)[("STORE-003", DISCONTINUED_SKU)]
+    assert all(row.physical_assortment for row in rows)
+
+
+def test_discontinuation_does_not_affect_other_skus_at_the_same_store():
+    result = run_slice(CONFIG)
+    rows = _by_pair(result.days)[("STORE-003", "SKU-001")]
+    assert all(row.sku_lifecycle_state == "ACTIVE" for row in rows)
+
+
+def test_in_transit_delivery_still_arrives_after_discontinuation():
+    """The decision this checkpoint closed explicitly: an order placed
+    before discontinuation is not cancelled -- its delivery still lands
+    on schedule, even after the SKU has become DISCONTINUED.
+    """
+    result = run_slice(CONFIG)
+    rows_by_index = {r.day_index: r for r in _by_pair(result.days)[("STORE-004", DISCONTINUED_SKU)]}
+    delivery_day = 57  # see the discontinued_on comment on SKU-003 in config.py
+    assert rows_by_index[delivery_day].sku_lifecycle_state == "DISCONTINUED"
+    assert rows_by_index[delivery_day].deliveries > 0
+
+
+# ---------------------------------------------------------------------
+# Store lifecycle (Document 4) -- STORE-006, OPEN -> TEMPORARILY_CLOSED
+# -> OPEN, days 20-27
+# ---------------------------------------------------------------------
+
+CLOSED_STORE = "STORE-006"
+CLOSURE_START_INDEX = 15
+CLOSURE_END_INDEX = 22
+
+
+def _skus_carried_by(store_id: str) -> list[str]:
+    return [
+        sku_id
+        for (s_id, sku_id), windows in CONFIG.assortment.items()
+        if s_id == store_id and windows
+    ]
+
+
+def test_store_closure_affects_every_carried_sku_simultaneously():
+    result = run_slice(CONFIG)
+    by_pair = _by_pair(result.days)
+    carried_skus = _skus_carried_by(CLOSED_STORE)
+    assert carried_skus
+    for sku_id in carried_skus:
+        for row in by_pair[(CLOSED_STORE, sku_id)]:
+            if CLOSURE_START_INDEX <= row.day_index <= CLOSURE_END_INDEX:
+                assert row.store_lifecycle_state == "TEMPORARILY_CLOSED"
+                assert row.sell_eligible is False
+                assert row.actual_demand == 0
+                assert row.sales == 0
+                assert row.order_placed_quantity == 0
+            else:
+                assert row.store_lifecycle_state == "OPEN"
+
+
+def test_store_closure_does_not_affect_other_stores():
+    result = run_slice(CONFIG)
+    rows = _by_pair(result.days)[("STORE-001", "SKU-001")]
+    assert all(row.store_lifecycle_state == "OPEN" for row in rows)
+
+
+def test_store_identity_persists_after_reopening():
+    result = run_slice(CONFIG)
+    store = next(s for s in result.stores if s.store_id == CLOSED_STORE)
+    assert store.store_scale_class == 1
+    assert store.format == "Discount"
+    assert store.region == "Central"
+
+    rows = _by_pair(result.days)[(CLOSED_STORE, "SKU-001")]
+    after_reopening = [r for r in rows if r.day_index > CLOSURE_END_INDEX]
+    assert after_reopening
+    assert any(r.sell_eligible for r in after_reopening)
+
+
+def test_in_transit_delivery_still_arrives_during_store_closure():
+    result = run_slice(CONFIG)
+    rows_by_index = {r.day_index: r for r in _by_pair(result.days)[(CLOSED_STORE, "SKU-001")]}
+    delivery_day = 16  # see the closure comment on STORE-006 in config.py
+    assert rows_by_index[delivery_day].store_lifecycle_state == "TEMPORARILY_CLOSED"
+    assert rows_by_index[delivery_day].deliveries > 0
+
+
+# ---------------------------------------------------------------------
 # Regional demand correlation -- mechanism-level, not a statistical
 # result demanded from a small sample.
 # ---------------------------------------------------------------------

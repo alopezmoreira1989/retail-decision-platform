@@ -39,6 +39,8 @@ def write_snapshot(result: SliceResult, output_dir: Path | None = None) -> Path:
             "store_id": [d.store_id for d in result.days],
             "sku_id": [d.sku_id for d in result.days],
             "physical_assortment": [d.physical_assortment for d in result.days],
+            "sku_lifecycle_state": [d.sku_lifecycle_state for d in result.days],
+            "store_lifecycle_state": [d.store_lifecycle_state for d in result.days],
             "sell_eligible": [d.sell_eligible for d in result.days],
             "available": [d.available for d in result.days],
             "potential_demand": [d.potential_demand for d in result.days],

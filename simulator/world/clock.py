@@ -23,8 +23,10 @@ regions, (store, SKU) pairs, and configured promotions -- never on the
 simulation horizon:
 
     setup (once, before the day loop):
-        for each (store, SKU) pair, in config order:
-            draw potential_demand (2 draws: store baseline, popularity)
+        for each store, in config order:
+            draw store_baseline (1 draw)
+        for each SKU, in config order:
+            draw sku_popularity (1 draw)
         for each promotion, in config.promotions order:
             draw promotion magnitudes (3 draws: lift, pre, post)
 
@@ -69,6 +71,26 @@ temporarily boosted) and has no awareness of promotions either. Both
 promotions.py functions this module calls are pure, single-promotion,
 single-day lookups -- never given "the whole promotions table" to scan
 for what's coming.
+
+Product/store lifecycle (Documents 2 and 4) needs no separate gate at
+all: `assortment.is_sell_eligible` already resolves both day-dependent
+states internally and ANDs them into the same sell-eligibility check
+that assortment and promotions already flow through. A discontinued
+SKU or a temporarily closed store simply becomes not-sell-eligible,
+which -- via the gates already described above -- stops demand and new
+orders exactly like a non-assorted pair does. `orders.py`, `sales.py`,
+`inventory.py`, and `promotions.py` require zero changes for lifecycle
+support. Deliveries already scheduled before a lifecycle event are
+NOT cancelled (Document 9 has no cancellation concept, and this module
+never invents one): `pending_deliveries` / inventory.step_inventory
+run unconditionally every day for every pair, so a shipment already in
+transit lands on schedule regardless of that pair's sell-eligibility
+that day. During exclusion, `Inventory[t+1] = Inventory[t] +
+Deliveries[t]` (sales and new orders are both zero, but arriving
+deliveries are not suppressed) -- inventory is not "frozen," it is
+merely undrawn-down; once any scheduled deliveries are exhausted it
+does stay flat, but that is a consequence of no further deliveries
+arriving, not a special rule.
 """
 
 from __future__ import annotations
@@ -97,6 +119,8 @@ class DayRecord:
     store_id: str
     sku_id: str
     physical_assortment: bool
+    sku_lifecycle_state: str
+    store_lifecycle_state: str
     sell_eligible: bool
     available: bool
     potential_demand: float
@@ -155,11 +179,20 @@ def run_slice(config: SimulationConfig, num_days: int | None = None) -> SliceRes
 
     rng = np.random.default_rng(config.run.seed)
 
-    potential_demand: dict[PairKey, float] = {}
-    for store, sku in pairs:  # fixed order -- see module docstring
-        potential_demand[(store.store_id, sku.sku_id)] = demand_mod.draw_potential_demand(
-            config.demand, store, rng
+    store_baseline: dict[str, float] = {}
+    for store in stores:  # fixed order -- see module docstring
+        store_baseline[store.store_id] = demand_mod.draw_store_baseline(config.demand, store, rng)
+
+    sku_popularity: dict[str, float] = {}
+    for sku in skus:  # fixed order -- see module docstring
+        sku_popularity[sku.sku_id] = demand_mod.draw_sku_popularity(config.demand, rng)
+
+    potential_demand: dict[PairKey, float] = {
+        (store.store_id, sku.sku_id): demand_mod.combine_potential_demand(
+            store_baseline[store.store_id], sku_popularity[sku.sku_id]
         )
+        for store, sku in pairs
+    }
 
     promotion_magnitudes: dict[str, promotions_mod.PromotionMagnitudes] = {}
     for promotion in config.promotions:  # fixed order -- see module docstring
@@ -190,6 +223,8 @@ def run_slice(config: SimulationConfig, num_days: int | None = None) -> SliceRes
             promotion = promotion_by_pair.get(key)
 
             physically_assorted = assortment_mod.is_physically_assorted(windows, day)
+            sku_state = entities_mod.sku_lifecycle_state(sku, day)
+            store_state = entities_mod.store_lifecycle_state(store, day)
             sell_eligible = assortment_mod.is_sell_eligible(windows, store, sku, day)
             available = assortment_mod.is_available(sell_eligible, opening_inventory[key])
 
@@ -263,6 +298,8 @@ def run_slice(config: SimulationConfig, num_days: int | None = None) -> SliceRes
                     store_id=store.store_id,
                     sku_id=sku.sku_id,
                     physical_assortment=physically_assorted,
+                    sku_lifecycle_state=sku_state,
+                    store_lifecycle_state=store_state,
                     sell_eligible=sell_eligible,
                     available=available,
                     potential_demand=potential_demand[key],

@@ -30,11 +30,29 @@ class RunConfig:
 
 
 @dataclass(frozen=True)
+class StoreClosureWindow:
+    """Document 4 -- OPEN -> TEMPORARILY_CLOSED -> OPEN. Non-terminal,
+    so (unlike SkuConfig.discontinued_on) this needs a full window, not
+    just a cutover date. Store identity, store_scale_class, format, and
+    region are unaffected by closure -- the store reverts to OPEN
+    automatically once the window ends, with nothing to reset.
+    """
+
+    effective_from: date
+    effective_to: date
+
+    def __post_init__(self) -> None:
+        if self.effective_from > self.effective_to:
+            raise ValueError("StoreClosureWindow: effective_from must not be after effective_to.")
+
+
+@dataclass(frozen=True)
 class StoreConfig:
     """Document 4 fields this slice actually exercises. `region` is a
     minimal grouping label only -- Document 4 explicitly leaves the
     concrete meaning of region as an implementation decision; no real
-    geography, boundaries, or demographics are modeled.
+    geography, boundaries, or demographics are modeled. `closure` is
+    None for a store that is never temporarily closed in this config.
     """
 
     store_id: str
@@ -42,12 +60,19 @@ class StoreConfig:
     store_scale_class: int
     format: str
     region: str
+    closure: StoreClosureWindow | None
 
 
 @dataclass(frozen=True)
 class SkuConfig:
+    """`discontinued_on` is None for a SKU that stays ACTIVE for the
+    whole run. Document 2: DISCONTINUED is terminal, so a single
+    cutover date is enough -- no window, unlike store closure.
+    """
+
     sku_id: str
     units_per_case: int
+    discontinued_on: date | None
 
 
 @dataclass(frozen=True)
@@ -288,6 +313,13 @@ class SimulationConfig:
             seen_pairs.add(pair)
 
 
+_START_DATE = date(2026, 1, 1)
+
+# 3 regions x 2 stores each -- every region has a real peer pair for
+# the regional-shock correlation mechanism, not just North (2/1
+# previously). store_scale_class now spans the full 1-4 range; 4 of
+# 6 format taxonomy values used, not maximized. STORE-006 carries a
+# closure window (Document 4) -- see below.
 _STORES = [
     StoreConfig(
         store_id="STORE-001",
@@ -295,6 +327,7 @@ _STORES = [
         store_scale_class=3,
         format="Supermarket",
         region="North",
+        closure=None,
     ),
     StoreConfig(
         store_id="STORE-002",
@@ -302,6 +335,7 @@ _STORES = [
         store_scale_class=2,
         format="Convenience",
         region="North",
+        closure=None,
     ),
     StoreConfig(
         store_id="STORE-003",
@@ -309,19 +343,78 @@ _STORES = [
         store_scale_class=3,
         format="Supermarket",
         region="South",
+        closure=None,
+    ),
+    StoreConfig(
+        store_id="STORE-004",
+        retailer_id="RETAILER-001",
+        store_scale_class=4,
+        format="Hypermarket",
+        region="South",
+        closure=None,
+    ),
+    StoreConfig(
+        store_id="STORE-005",
+        retailer_id="RETAILER-001",
+        store_scale_class=2,
+        format="Convenience",
+        region="Central",
+        closure=None,
+    ),
+    StoreConfig(
+        store_id="STORE-006",
+        retailer_id="RETAILER-001",
+        store_scale_class=1,
+        format="Discount",
+        region="Central",
+        # Document 4: OPEN -> TEMPORARILY_CLOSED -> OPEN, days 15-22.
+        # A new store (not one of the original three), so this event
+        # has zero interaction with any existing promotion or the
+        # STORE-001/SKU-002 assortment gap. Scenario configuration, not
+        # a business rule: chosen (not the ordering policy's
+        # lead_time_days) to land inside a delivery already scheduled
+        # under the pair's normal lead time -- day 13 is a review day
+        # (cadence 7, anchor 6, lead_time_days 3, unmodified), so its
+        # delivery on day 16 falls inside this window, demonstrating
+        # the "in-transit deliveries are not cancelled" decision without
+        # changing that pair's replenishment behavior for the rest of
+        # the run.
+        closure=StoreClosureWindow(
+            effective_from=_START_DATE + timedelta(days=15),
+            effective_to=_START_DATE + timedelta(days=22),
+        ),
     ),
 ]
 
+# SKU-003's discontinued_on is set below, after promotions are defined,
+# so the date can be chosen with PROMO-004's window visibly in mind.
 _SKUS = [
-    SkuConfig(sku_id="SKU-001", units_per_case=12),
-    SkuConfig(sku_id="SKU-002", units_per_case=24),
-    SkuConfig(sku_id="SKU-003", units_per_case=12),
-    SkuConfig(sku_id="SKU-004", units_per_case=24),
+    SkuConfig(sku_id="SKU-001", units_per_case=12, discontinued_on=None),
+    SkuConfig(sku_id="SKU-002", units_per_case=24, discontinued_on=None),
+    SkuConfig(
+        sku_id="SKU-003",
+        units_per_case=12,
+        # Document 2: ACTIVE -> DISCONTINUED, day 54. Scenario
+        # configuration, not a business rule: chosen (not
+        # STORE-004/SKU-003's lead_time_days) to land inside a delivery
+        # already scheduled under that pair's normal lead time -- day
+        # 52 is a review day (cadence 14, anchor 10, lead_time_days 5,
+        # unmodified), so its delivery on day 57 falls after this date,
+        # demonstrating "in-transit deliveries are not cancelled"
+        # without changing that pair's replenishment behavior for the
+        # rest of the run. Also comfortably clear of PROMO-004's window
+        # (days 30-40, plus its post-phase through day 45, on SKU-003 at
+        # STORE-003 -- also carrying this SKU): an earlier date (e.g.
+        # day 26) would silently block PROMO-004's already-verified
+        # demand lift by making that pair non-sell-eligible before the
+        # promotion ever runs, which is exactly the kind of accidental
+        # interaction this checkpoint should not introduce.
+        discontinued_on=_START_DATE + timedelta(days=54),
+    ),
+    SkuConfig(sku_id="SKU-004", units_per_case=24, discontinued_on=None),
 ]
 
-_REGIONS = ["North", "South"]
-
-_START_DATE = date(2026, 1, 1)
+_REGIONS = ["North", "South", "Central"]
 
 # Document 5, Layer 2. SKU-004 is distribution-ineligible for
 # RETAILER-001 -- the sole retailer in this slice -- so no store may
@@ -342,11 +435,19 @@ _DISTRIBUTION_ELIGIBILITY: dict[str, bool] = {
 # STORE-001       carried   carried*        -         -
 # STORE-002       carried     -           carried     -
 # STORE-003       carried   carried       carried     -
+# STORE-004       carried   carried       carried     -
+# STORE-005       carried     -           carried     -
+# STORE-006       carried     -             -         -
 #
 # * STORE-001 / SKU-002: carried days 1-30, gap days 31-40 (Document
 #   5's "leaving and returning" case -- just a second row, no new
 #   state), carried again from day 41 onward. Dates are slice
 #   configuration, not a business rule.
+#
+# SKU-003 is carried by four stores (002, 003, 004, 005) -- its day-54
+# discontinuation (see _SKUS) therefore affects all four simultaneously,
+# a stronger demonstration of the catalog-wide pattern than a single
+# store would give.
 _ASSORTMENT: dict[tuple[str, str], list[AssortmentWindow]] = {
     ("STORE-001", "SKU-001"): [AssortmentWindow(effective_from=_START_DATE, effective_to=None)],
     ("STORE-001", "SKU-002"): [
@@ -363,6 +464,18 @@ _ASSORTMENT: dict[tuple[str, str], list[AssortmentWindow]] = {
     ("STORE-003", "SKU-002"): [AssortmentWindow(effective_from=_START_DATE, effective_to=None)],
     ("STORE-003", "SKU-003"): [AssortmentWindow(effective_from=_START_DATE, effective_to=None)],
     ("STORE-003", "SKU-004"): [],
+    ("STORE-004", "SKU-001"): [AssortmentWindow(effective_from=_START_DATE, effective_to=None)],
+    ("STORE-004", "SKU-002"): [AssortmentWindow(effective_from=_START_DATE, effective_to=None)],
+    ("STORE-004", "SKU-003"): [AssortmentWindow(effective_from=_START_DATE, effective_to=None)],
+    ("STORE-004", "SKU-004"): [],
+    ("STORE-005", "SKU-001"): [AssortmentWindow(effective_from=_START_DATE, effective_to=None)],
+    ("STORE-005", "SKU-002"): [],
+    ("STORE-005", "SKU-003"): [AssortmentWindow(effective_from=_START_DATE, effective_to=None)],
+    ("STORE-005", "SKU-004"): [],
+    ("STORE-006", "SKU-001"): [AssortmentWindow(effective_from=_START_DATE, effective_to=None)],
+    ("STORE-006", "SKU-002"): [],
+    ("STORE-006", "SKU-003"): [],
+    ("STORE-006", "SKU-004"): [],
 }
 
 # Ordering policy and initial inventory are still required for every
@@ -408,6 +521,42 @@ _ORDERING_POLICIES: dict[tuple[str, str], OrderingPolicy] = {
     ("STORE-003", "SKU-004"): OrderingPolicy(
         review_cadence_days=14, review_anchor_day_index=10, order_up_to_level=150, lead_time_days=5
     ),
+    ("STORE-004", "SKU-001"): OrderingPolicy(
+        review_cadence_days=14, review_anchor_day_index=13, order_up_to_level=200, lead_time_days=5
+    ),
+    ("STORE-004", "SKU-002"): OrderingPolicy(
+        review_cadence_days=14, review_anchor_day_index=6, order_up_to_level=220, lead_time_days=4
+    ),
+    ("STORE-004", "SKU-003"): OrderingPolicy(
+        review_cadence_days=14, review_anchor_day_index=10, order_up_to_level=200, lead_time_days=5
+    ),
+    ("STORE-004", "SKU-004"): OrderingPolicy(
+        review_cadence_days=14, review_anchor_day_index=13, order_up_to_level=150, lead_time_days=5
+    ),
+    ("STORE-005", "SKU-001"): OrderingPolicy(
+        review_cadence_days=10, review_anchor_day_index=9, order_up_to_level=90, lead_time_days=3
+    ),
+    ("STORE-005", "SKU-002"): OrderingPolicy(
+        review_cadence_days=10, review_anchor_day_index=2, order_up_to_level=110, lead_time_days=3
+    ),
+    ("STORE-005", "SKU-003"): OrderingPolicy(
+        review_cadence_days=10, review_anchor_day_index=5, order_up_to_level=90, lead_time_days=3
+    ),
+    ("STORE-005", "SKU-004"): OrderingPolicy(
+        review_cadence_days=10, review_anchor_day_index=9, order_up_to_level=90, lead_time_days=3
+    ),
+    ("STORE-006", "SKU-001"): OrderingPolicy(
+        review_cadence_days=7, review_anchor_day_index=6, order_up_to_level=60, lead_time_days=3
+    ),
+    ("STORE-006", "SKU-002"): OrderingPolicy(
+        review_cadence_days=7, review_anchor_day_index=6, order_up_to_level=60, lead_time_days=3
+    ),
+    ("STORE-006", "SKU-003"): OrderingPolicy(
+        review_cadence_days=7, review_anchor_day_index=6, order_up_to_level=60, lead_time_days=3
+    ),
+    ("STORE-006", "SKU-004"): OrderingPolicy(
+        review_cadence_days=7, review_anchor_day_index=6, order_up_to_level=60, lead_time_days=3
+    ),
 }
 
 _INITIAL_INVENTORY: dict[tuple[str, str], int] = {
@@ -423,6 +572,18 @@ _INITIAL_INVENTORY: dict[tuple[str, str], int] = {
     ("STORE-003", "SKU-002"): 120,
     ("STORE-003", "SKU-003"): 90,
     ("STORE-003", "SKU-004"): 0,  # never assorted, distribution-ineligible
+    ("STORE-004", "SKU-001"): 140,
+    ("STORE-004", "SKU-002"): 150,
+    ("STORE-004", "SKU-003"): 130,
+    ("STORE-004", "SKU-004"): 0,  # never assorted, distribution-ineligible
+    ("STORE-005", "SKU-001"): 60,
+    ("STORE-005", "SKU-002"): 0,  # never assorted
+    ("STORE-005", "SKU-003"): 65,
+    ("STORE-005", "SKU-004"): 0,  # never assorted, distribution-ineligible
+    ("STORE-006", "SKU-001"): 40,
+    ("STORE-006", "SKU-002"): 0,  # never assorted
+    ("STORE-006", "SKU-003"): 0,  # never assorted
+    ("STORE-006", "SKU-004"): 0,  # never assorted, distribution-ineligible
 }
 
 # Document 10. Five promotions, each demonstrating a distinct required

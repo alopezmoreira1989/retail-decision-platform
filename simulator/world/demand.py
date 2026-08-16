@@ -40,6 +40,25 @@ second, separate actual-demand multiplier). Since price isn't varied
 across SKUs in this slice, it is absorbed into the product-popularity
 draw rather than modeled as its own term -- a known limitation while
 price has nothing to vary against, not a business decision.
+
+`potential_demand` is the product of two independent, entity-level
+latent quantities, not a single per-(store, SKU) pair draw:
+
+    store_baseline[store]   -- drawn once per store (Document 4: "each
+                                store gets its own individual baseline
+                                demand level")
+    sku_popularity[sku]     -- drawn once per SKU (Document 6: "each
+                                SKU carries its own individual
+                                popularity factor")
+    potential_demand[store, sku] = store_baseline[store] * sku_popularity[sku]
+
+Each is drawn exactly once, before the day loop, in a fixed
+(config.stores / config.skus) order -- see clock.py. No third,
+per-pair random term is introduced: pair-level heterogeneity still
+comes from the daily idiosyncratic-noise draw in draw_actual_demand,
+plus the multiplicative interaction of two independent per-entity
+values, which already differentiates every pair without needing its
+own draw.
 """
 
 from __future__ import annotations
@@ -53,22 +72,36 @@ from simulator.world.config import DemandConfig
 from simulator.world.entities import Store
 
 
-def draw_potential_demand(
+def draw_store_baseline(
     demand_config: DemandConfig, store: Store, rng: np.random.Generator
 ) -> float:
-    """Document 6: store-level baseline x product-level popularity factor.
-
-    Drawn once per (store, SKU) pair, before the day loop -- a
-    structural, relatively stable quantity (Document 6's two-stage
-    split). Must happen before any day-loop RNG usage, in a fixed pair
-    order, so it can never depend on the simulation horizon length
-    (see clock.py's truncation-invariance discipline).
+    """Document 4: each store's own individual baseline demand level,
+    drawn once per store -- a structural, relatively stable quantity.
+    Must happen before any day-loop RNG usage, in a fixed store order,
+    so it can never depend on the simulation horizon length (see
+    clock.py's truncation-invariance discipline).
     """
     low, high = demand_config.store_baseline_range_by_tier[store.store_scale_class]
-    store_baseline = rng.uniform(low, high)
+    return rng.uniform(low, high)
+
+
+def draw_sku_popularity(demand_config: DemandConfig, rng: np.random.Generator) -> float:
+    """Document 6: each SKU's own individual popularity factor, drawn
+    once per SKU -- constant across every store that carries it. Must
+    happen before any day-loop RNG usage, in a fixed SKU order, for
+    the same truncation-invariance reason as draw_store_baseline.
+    """
     pop_low, pop_high = demand_config.product_popularity_range
-    product_popularity_factor = rng.uniform(pop_low, pop_high)
-    return store_baseline * product_popularity_factor
+    return rng.uniform(pop_low, pop_high)
+
+
+def combine_potential_demand(store_baseline: float, sku_popularity: float) -> float:
+    """Document 4 + Document 6: potential demand for a (store, SKU)
+    pair is the product of that store's baseline and that SKU's
+    popularity -- a pure lookup/multiply, no RNG involved. Both inputs
+    were already drawn once, per entity, before the day loop.
+    """
+    return store_baseline * sku_popularity
 
 
 def draw_regional_shocks(
