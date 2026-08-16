@@ -1,5 +1,6 @@
-"""Vertical Slice #1.5 driver -- the day-by-day forward generation loop
-over multiple (store, SKU) pairs.
+"""Vertical Slice #2 driver -- the day-by-day forward generation loop
+over multiple (store, SKU) pairs, with explicit, config-driven physical
+assortment.
 
 Sequencing per day, matching the approved causal chain exactly, per pair:
 
@@ -33,16 +34,26 @@ generator ever depended on the horizon length, on future state, or on
 another pair's state, a truncated run would stop matching the prefix
 of a longer run.
 
-Slice simplification: the (store, SKU) pair set below is every store
-crossed with every SKU. This is a temporary implementation
-convenience for exercising N stores x N SKUs, not a claim that every
-store carries every SKU as a business fact -- Document 5 makes
-physical assortment a Store-SKU relationship that can differ by
-store, and `physical_assortment`/`sell_eligible` (assortment.py)
-remain the sole authoritative mechanism determining what a store can
-actually sell. A future slice that needs partial/varying assortment
-across pairs would change which pairs get constructed here, not the
-assortment/eligibility logic itself.
+The Cartesian Store x SKU pair set is a simulation tracking universe,
+not a business assertion that every store carries every SKU. Physical
+assortment is the authoritative Phase 1 representation of whether a
+Store x SKU relationship exists. Every pair constructed below is
+tracked (it gets a DayRecord every day, which makes it trivial to
+later query "why were there no sales here"), but whether it is ever
+actually carried -- and when -- is decided entirely by
+`config.assortment` (config.py) and read through
+`assortment.is_physically_assorted` / `assortment.is_sell_eligible`.
+A pair with no configured assortment windows simply stays
+not-sell-eligible for its entire tracked history.
+
+Order review is gated on that same sell-eligibility, and the gate
+lives here, not in orders.py: orders.py has no awareness of assortment
+at all and must not query it -- this module (the causal orchestrator)
+decides whether an active replenishment relationship currently exists
+for a pair and only calls `orders.place_order_if_due` when it does.
+This isn't a new business rule -- Document 9's whole ordering-policy
+model presupposes a store-SKU pair that already has a physical shelf
+relationship to replenish.
 """
 
 from __future__ import annotations
@@ -58,7 +69,7 @@ from simulator.world import entities as entities_mod
 from simulator.world import inventory as inventory_mod
 from simulator.world import orders as orders_mod
 from simulator.world import sales as sales_mod
-from simulator.world.config import SimulationConfig
+from simulator.world.config import AssortmentWindow, SimulationConfig
 
 PairKey = tuple[str, str]  # (store_id, sku_id)
 
@@ -105,20 +116,14 @@ def run_slice(config: SimulationConfig, num_days: int | None = None) -> SliceRes
     skus = [entities_mod.build_sku(kc) for kc in config.skus]
 
     # Fixed pair order: stores outer, SKUs inner, both in config order.
-    # SLICE SIMPLIFICATION, not a business rule: every store x every
-    # SKU is evaluated here as a technical convenience. This does not
-    # imply every store carries every SKU -- physical_assortment /
-    # sell_eligible (assortment.py) remain the authoritative mechanism
-    # that actually determines what each store can sell; every pair
-    # constructed here still passes through that check independently.
+    # This is the tracking universe (see module docstring) -- every
+    # store x every SKU -- not the assortment itself.
     pairs: list[tuple[entities_mod.Store, entities_mod.Sku]] = [
         (store, sku) for store in stores for sku in skus
     ]
 
-    assortments: dict[PairKey, assortment_mod.AssortmentRecord] = {
-        (store.store_id, sku.sku_id): assortment_mod.build_assortment(
-            store, sku, config.run.start_date
-        )
+    assortment_windows: dict[PairKey, list[AssortmentWindow]] = {
+        (store.store_id, sku.sku_id): assortment_mod.build_assortment_windows(store, sku, config)
         for store, sku in pairs
     }
 
@@ -148,11 +153,11 @@ def run_slice(config: SimulationConfig, num_days: int | None = None) -> SliceRes
 
         for store, sku in pairs:  # fixed order -- see module docstring
             key = (store.store_id, sku.sku_id)
-            assortment = assortments[key]
+            windows = assortment_windows[key]
             policy = config.ordering_policies[key]
 
-            physically_assorted = assortment_mod.is_physically_assorted(assortment, day)
-            sell_eligible = assortment_mod.is_sell_eligible(assortment, store, sku, day)
+            physically_assorted = assortment_mod.is_physically_assorted(windows, day)
+            sell_eligible = assortment_mod.is_sell_eligible(windows, store, sku, day)
             available = assortment_mod.is_available(sell_eligible, opening_inventory[key])
 
             if sell_eligible:
@@ -169,15 +174,22 @@ def run_slice(config: SimulationConfig, num_days: int | None = None) -> SliceRes
 
             sales_result = sales_mod.compute_sales(actual_demand, opening_inventory[key])
 
-            order = orders_mod.place_order_if_due(
-                store.store_id,
-                sku.sku_id,
-                day_index,
-                day,
-                opening_inventory[key],
-                policy,
-                sku.units_per_case,
-            )
+            # Order gate: an active replenishment relationship exists
+            # only while this pair is sell-eligible. orders.py has no
+            # awareness of assortment and is never asked otherwise --
+            # this orchestrator decides, then calls it.
+            if sell_eligible:
+                order = orders_mod.place_order_if_due(
+                    store.store_id,
+                    sku.sku_id,
+                    day_index,
+                    day,
+                    opening_inventory[key],
+                    policy,
+                    sku.units_per_case,
+                )
+            else:
+                order = None
             order_quantity = 0
             if order is not None:
                 orders.append(order)

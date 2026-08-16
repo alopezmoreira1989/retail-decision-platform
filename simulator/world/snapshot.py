@@ -1,4 +1,4 @@
-"""Persists Vertical Slice #1.5 output as Parquet.
+"""Persists Vertical Slice #2 output as Parquet.
 
 PROVISIONAL. This is a placeholder persistence implementation for the
 vertical slice only. docs/SIMULATION.md's "World snapshot format and
@@ -81,8 +81,28 @@ def write_snapshot(result: SliceResult, output_dir: Path | None = None) -> Path:
         {
             "sku_id": [k.sku_id for k in result.skus],
             "units_per_case": [k.units_per_case for k in result.skus],
+            "distribution_eligible": [
+                result.config.distribution_eligibility.get(k.sku_id, True) for k in result.skus
+            ],
         }
     )
     pq.write_table(skus_table, out_dir / "skus.parquet")
+
+    assortment_rows = [
+        (store_id, sku_id, window.effective_from.isoformat(), window.effective_to)
+        for (store_id, sku_id), windows in result.config.assortment.items()
+        for window in windows
+    ]
+    assortment_table = pa.table(
+        {
+            "store_id": [row[0] for row in assortment_rows],
+            "sku_id": [row[1] for row in assortment_rows],
+            "effective_from": [row[2] for row in assortment_rows],
+            "effective_to": [
+                row[3].isoformat() if row[3] is not None else None for row in assortment_rows
+            ],
+        }
+    )
+    pq.write_table(assortment_table, out_dir / "assortment.parquet")
 
     return out_dir

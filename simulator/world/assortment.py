@@ -1,49 +1,47 @@
-"""Document 5 -- physical assortment and derived sell-eligibility.
+"""Document 5 -- physical assortment (as a set of effective-dated
+windows per Store x SKU pair) and derived sell-eligibility/availability.
 
-Scope note: this slice's single store-SKU pair is assorted for the
-entire simulation window -- no assortment-change event is exercised.
-Distribution eligibility (Document 5, Layer 2) is not modeled as a
-separate record here; it is implicitly true, since a single
-retailer/SKU slice has nothing to vary it against.
+Assortment membership is explicit configuration (Vertical Slice #2,
+Option A) -- no probability model, no store_scale_class -> assortment
+breadth formula. That generative-formula question is exactly what
+Document 5 leaves as "an implementation decision, not designed here";
+this slice defers it rather than inventing one. A pair with no
+configured windows was never physically assorted; a pair with more
+than one window was carried, stopped, and later carried again
+(Document 5: "just a second row," no new lifecycle state).
+
+Distribution eligibility (Document 5, Layer 2) is validated at
+SimulationConfig construction time (config.py's __post_init__), not
+here -- by the time a window list reaches this module, the invariant
+`physical_assortment implies distribution_eligibility` already holds
+by construction.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import date
 
+from simulator.world.config import AssortmentWindow, SimulationConfig
 from simulator.world.entities import Sku, Store
 
 
-@dataclass(frozen=True)
-class AssortmentRecord:
-    store_id: str
-    sku_id: str
-    effective_from: date
-    effective_to: date | None  # None = open-ended
+def build_assortment_windows(
+    store: Store, sku: Sku, config: SimulationConfig
+) -> list[AssortmentWindow]:
+    return list(config.assortment.get((store.store_id, sku.sku_id), []))
 
 
-def build_assortment(store: Store, sku: Sku, start_date: date) -> AssortmentRecord:
-    return AssortmentRecord(
-        store_id=store.store_id,
-        sku_id=sku.sku_id,
-        effective_from=start_date,
-        effective_to=None,
+def is_physically_assorted(windows: list[AssortmentWindow], day: date) -> bool:
+    return any(
+        day >= window.effective_from and (window.effective_to is None or day <= window.effective_to)
+        for window in windows
     )
 
 
-def is_physically_assorted(assortment: AssortmentRecord, day: date) -> bool:
-    if day < assortment.effective_from:
-        return False
-    if assortment.effective_to is not None and day > assortment.effective_to:
-        return False
-    return True
-
-
-def is_sell_eligible(assortment: AssortmentRecord, store: Store, sku: Sku, day: date) -> bool:
+def is_sell_eligible(windows: list[AssortmentWindow], store: Store, sku: Sku, day: date) -> bool:
     """Document 5, Layer 4 -- derived, never stored."""
     return (
-        is_physically_assorted(assortment, day)
+        is_physically_assorted(windows, day)
         and sku.lifecycle_state == "ACTIVE"
         and store.lifecycle_state == "OPEN"
     )
