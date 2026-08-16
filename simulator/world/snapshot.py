@@ -1,4 +1,4 @@
-"""Persists Vertical Slice #2 output as Parquet.
+"""Persists Vertical Slice #3 output as Parquet.
 
 PROVISIONAL. This is a placeholder persistence implementation for the
 vertical slice only. docs/SIMULATION.md's "World snapshot format and
@@ -42,6 +42,9 @@ def write_snapshot(result: SliceResult, output_dir: Path | None = None) -> Path:
             "sell_eligible": [d.sell_eligible for d in result.days],
             "available": [d.available for d in result.days],
             "potential_demand": [d.potential_demand for d in result.days],
+            "promotion_id": [d.promotion_id for d in result.days],
+            "promotion_phase": [d.promotion_phase for d in result.days],
+            "promotion_log_modifier": [d.promotion_log_modifier for d in result.days],
             "actual_demand": [d.actual_demand for d in result.days],
             "opening_inventory": [d.opening_inventory for d in result.days],
             "sales": [d.sales for d in result.days],
@@ -104,5 +107,28 @@ def write_snapshot(result: SliceResult, output_dir: Path | None = None) -> Path:
         }
     )
     pq.write_table(assortment_table, out_dir / "assortment.parquet")
+
+    promotions_table = pa.table(
+        {
+            "promotion_id": [p.promotion_id for p in result.config.promotions],
+            "store_id": [p.store_id for p in result.config.promotions],
+            "sku_id": [p.sku_id for p in result.config.promotions],
+            "promotion_type": [p.promotion_type for p in result.config.promotions],
+            "discount_depth": [p.discount_depth for p in result.config.promotions],
+            "origin": [p.origin for p in result.config.promotions],
+            "planned_start": [p.planned_start.isoformat() for p in result.config.promotions],
+            "planned_end": [p.planned_end.isoformat() for p in result.config.promotions],
+            "execution_state": [p.execution_state for p in result.config.promotions],
+            "actual_start": [
+                p.actual_start.isoformat() if p.actual_start is not None else None
+                for p in result.config.promotions
+            ],
+            "actual_end": [
+                p.actual_end.isoformat() if p.actual_end is not None else None
+                for p in result.config.promotions
+            ],
+        }
+    )
+    pq.write_table(promotions_table, out_dir / "promotions.parquet")
 
     return out_dir

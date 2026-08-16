@@ -1,17 +1,19 @@
-"""Configuration for Vertical Slice #2 (N stores x N SKUs, explicit
-Store x SKU physical assortment).
+"""Configuration for Vertical Slice #3 (N stores x N SKUs, explicit
+Store x SKU physical assortment, Document 10 promotions).
 
 All numeric values here are simulation-run implementation parameters,
-not approved NovaFoods business rules. Documents 6 (Demand) and 9
-(Orders/Replenishment) explicitly delegate exact formulas,
-distributions, and coefficients to implementation -- see
-docs/world/06-demand.md and docs/world/09-orders-replenishment.md.
+not approved NovaFoods business rules. Documents 6 (Demand), 9
+(Orders/Replenishment), and 10 (Promotions & Events) explicitly
+delegate exact formulas, distributions, and coefficients to
+implementation -- see docs/world/06-demand.md,
+docs/world/09-orders-replenishment.md, and
+docs/world/10-promotions-events.md.
 
 Structure, not a generic configuration framework: run parameters,
-entity parameters, and per-(store, SKU) replenishment/assortment
-parameters are kept as separate, explicit pieces rather than one flat
-object, so that adding stores/SKUs never requires reshaping unrelated
-config.
+entity parameters, and per-(store, SKU) replenishment/assortment/
+promotion parameters are kept as separate, explicit pieces rather than
+one flat object, so that adding stores/SKUs/promotions never requires
+reshaping unrelated config.
 """
 
 from __future__ import annotations
@@ -67,11 +69,14 @@ class DemandConfig:
     the two components of the log-space demand combination:
 
         log(actual_demand) = log(potential_demand) + log(seasonal_modifier)
-                              + regional_shock + idiosyncratic_noise
+                              + regional_shock + promotional_log_modifier
+                              + idiosyncratic_noise
 
     Their ratio, not either value alone, is what determines how
     correlated same-region stores end up being -- itself a simulation
-    parameter, not a business decision.
+    parameter, not a business decision. `promotional_log_modifier`
+    (Document 10) is a separate, structurally independent term -- see
+    PromotionDemandConfig below and promotions.py.
     """
 
     store_baseline_range_by_tier: dict[int, tuple[float, float]]
@@ -91,15 +96,132 @@ class OrderingPolicy:
     review calendar is a business question this slice does not decide;
     an explicit per-pair anchor avoids assuming they do.
 
-    Whether this policy is ever actually consulted on a given day is
-    decided by clock.py (the causal orchestrator), not by this policy
-    or by orders.py -- see clock.py's order-gating discipline.
+    Whether this policy (or a promotion-adjusted variant of it, see
+    promotions.py) is ever actually consulted on a given day is
+    decided by clock.py (the causal orchestrator), not by this policy,
+    orders.py, or promotions.py.
     """
 
     review_cadence_days: int
     review_anchor_day_index: int
     order_up_to_level: int
     lead_time_days: int
+
+
+@dataclass(frozen=True)
+class Promotion:
+    """Document 10's confirmed Promotion structure -- deliberately not
+    a full trade-promotion-management system. `scope` is represented
+    as this promotion applying to exactly one (store_id, sku_id) pair
+    (Option A -- an explicit pair, not a region/retailer-level
+    expansion; that broader scope semantics is not defined by Document
+    10 and is deferred, not decided, here).
+
+    Promotion existing for a pair says nothing about whether that pair
+    is physically assorted (Document 5) -- no validation here enforces
+    it, deliberately: a promotion planned against a SKU that isn't (or
+    stops being) carried is a valid Phase 1 scenario. The demand and
+    order mechanisms independently gate on sell-eligibility (see
+    clock.py), so an unassorted pair's promotion simply never has any
+    effect -- not because it is forbidden, but because the existing
+    sell-eligibility gate already prevents it.
+    """
+
+    promotion_id: str
+    store_id: str
+    sku_id: str
+    promotion_type: str  # "PRICE_PROMOTION" | "NON_PRICE_EVENT"
+    discount_depth: float | None  # required iff PRICE_PROMOTION
+    origin: str  # "NOVAFOODS_NEGOTIATED" | "RETAILER_UNILATERAL"
+    planned_start: date
+    planned_end: date
+    execution_state: str  # "executed" | "partially_executed" | "not_executed"
+    actual_start: date | None
+    actual_end: date | None
+    # Three-phase demand-modifier window widths (Document 10). Slice
+    # configuration, not a business rule -- kept per-promotion so a
+    # future config could vary them, though this slice's example
+    # config uses the same values throughout.
+    pre_phase_days: int
+    post_phase_days: int
+
+    def __post_init__(self) -> None:
+        if self.planned_start > self.planned_end:
+            raise ValueError(
+                f"Promotion {self.promotion_id!r}: planned_start must not be after planned_end."
+            )
+        if self.promotion_type == "NON_PRICE_EVENT" and self.discount_depth is not None:
+            raise ValueError(
+                f"Promotion {self.promotion_id!r}: NON_PRICE_EVENT must not carry a discount_depth."
+            )
+        if self.promotion_type == "PRICE_PROMOTION" and not (
+            self.discount_depth is not None and self.discount_depth > 0
+        ):
+            raise ValueError(
+                f"Promotion {self.promotion_id!r}: PRICE_PROMOTION requires a positive "
+                f"discount_depth."
+            )
+        if self.execution_state == "not_executed":
+            if self.actual_start is not None or self.actual_end is not None:
+                raise ValueError(
+                    f"Promotion {self.promotion_id!r}: not_executed must not carry "
+                    f"actual_start/actual_end."
+                )
+        else:
+            if self.actual_start is None or self.actual_end is None:
+                raise ValueError(
+                    f"Promotion {self.promotion_id!r}: {self.execution_state} requires "
+                    f"actual_start and actual_end."
+                )
+            if self.actual_start > self.actual_end:
+                raise ValueError(
+                    f"Promotion {self.promotion_id!r}: actual_start must not be after actual_end."
+                )
+            if self.execution_state == "executed" and (
+                self.actual_start != self.planned_start or self.actual_end != self.planned_end
+            ):
+                raise ValueError(
+                    f"Promotion {self.promotion_id!r}: executed must mirror the planned dates "
+                    f"exactly (Document 10: actual defaults to the planned range when fully "
+                    f"executed)."
+                )
+        if self.pre_phase_days < 0 or self.post_phase_days < 0:
+            raise ValueError(f"Promotion {self.promotion_id!r}: phase-window widths must be >= 0.")
+
+
+@dataclass(frozen=True)
+class PromotionDemandConfig:
+    """Document 10, Effect 1 -- "configurable and stochastic, not a
+    universal hardcoded curve." Each promotion's lift/pre/post
+    magnitudes (log-space) are drawn once, from these ranges, before
+    the day loop (see clock.py) -- not redrawn per day, per pair, or
+    per lookup, which is what keeps truncation invariance intact.
+
+    `discount_sensitivity` is the only place discount_depth enters the
+    model: it adds to the stochastically-drawn base lift for
+    PRICE_PROMOTIONs only. NON_PRICE_EVENTs get the stochastic draw
+    alone. This is an implementation formula, not a NovaFoods business
+    rule -- Document 10 confirms discount_depth feeds the promotional
+    modifier without specifying how.
+    """
+
+    lift_log_range: tuple[float, float]
+    pre_phase_log_range: tuple[float, float]
+    post_phase_log_range: tuple[float, float]
+    discount_sensitivity: float
+
+
+@dataclass(frozen=True)
+class PreStockingConfig:
+    """Document 10, Effect 2 -- pre-stocking responds to the *planned*
+    promotion, only for NovaFoods-negotiated origin (see
+    promotions.py). `lead_days` and `multiplier` are simulator
+    configuration, not a pre-stocking sizing formula approved anywhere
+    in Document 10 (which explicitly delegates it to implementation).
+    """
+
+    lead_days: int
+    multiplier: float
 
 
 @dataclass(frozen=True)
@@ -123,6 +245,14 @@ class SimulationConfig:
     # that are never assorted, where they simply stay inert.
     ordering_policies: dict[tuple[str, str], OrderingPolicy]
     initial_inventory: dict[tuple[str, str], int]
+    # Document 10. At most one promotion per (store_id, sku_id) in
+    # this slice -- overlapping/stacked promotions on the same pair
+    # are a genuine unresolved question Document 10 doesn't address;
+    # avoided here as a stated slice limitation, not a Ground Truth
+    # rule (see __post_init__).
+    promotions: list[Promotion]
+    promotion_demand: PromotionDemandConfig
+    pre_stocking: PreStockingConfig
 
     def __post_init__(self) -> None:
         """Strong validation of Document 5's structural invariant:
@@ -131,6 +261,9 @@ class SimulationConfig:
         ineligible SKU must never have a physical assortment window at
         any store -- checked at construction time, not left to be
         discovered later from generated data.
+
+        Also enforces this slice's stated limitation (not a Ground
+        Truth rule): at most one promotion per (store_id, sku_id).
         """
         for (store_id, sku_id), windows in self.assortment.items():
             if windows and not self.distribution_eligibility.get(sku_id, True):
@@ -141,6 +274,18 @@ class SimulationConfig:
                     f"physical_assortment must never exist without "
                     f"distribution_eligibility (Document 5)."
                 )
+
+        seen_pairs: set[tuple[str, str]] = set()
+        for promotion in self.promotions:
+            pair = (promotion.store_id, promotion.sku_id)
+            if pair in seen_pairs:
+                raise ValueError(
+                    f"More than one promotion targets {pair!r}. Overlapping/stacked "
+                    f"promotions on the same (store, SKU) pair are a genuine unresolved "
+                    f"question (Document 10 doesn't define precedence or stacking) -- "
+                    f"avoided in this slice as a stated limitation, not enforced generally."
+                )
+            seen_pairs.add(pair)
 
 
 _STORES = [
@@ -280,6 +425,103 @@ _INITIAL_INVENTORY: dict[tuple[str, str], int] = {
     ("STORE-003", "SKU-004"): 0,  # never assorted, distribution-ineligible
 }
 
+# Document 10. Five promotions, each demonstrating a distinct required
+# case (see the Vertical Slice #3 design proposal, section 13) -- not
+# maximized for count or volume:
+#
+# PROMO-001 (STORE-001/SKU-001): NovaFoods-negotiated, partially
+#   executed (2 days late, mirroring Document 10's own illustrative
+#   example) -- pre-stocking fires, but the lift only covers part of
+#   the planned window; a small surplus should emerge on its own.
+# PROMO-002 (STORE-002/SKU-001): NovaFoods-negotiated, not executed at
+#   all -- pre-stocking fires, zero demand lift -- the cleanest surplus
+#   case: nothing besides existing mechanics is needed to produce it.
+# PROMO-003 (STORE-003/SKU-001): NovaFoods-negotiated, fully executed
+#   as planned -- pre-stocking, full lift, real depletion.
+# PROMO-004 (STORE-003/SKU-003): retailer-unilateral, NON_PRICE_EVENT,
+#   fully executed -- a real demand lift with NO pre-stocking response,
+#   since NovaFoods never knew about it in advance.
+# PROMO-005 (STORE-001/SKU-003): NovaFoods-negotiated, fully executed,
+#   but targets a pair that is NEVER physically assorted -- must
+#   produce zero effect throughout, demonstrating promotion != assortment.
+_PROMOTIONS: list[Promotion] = [
+    Promotion(
+        promotion_id="PROMO-001",
+        store_id="STORE-001",
+        sku_id="SKU-001",
+        promotion_type="PRICE_PROMOTION",
+        discount_depth=0.20,
+        origin="NOVAFOODS_NEGOTIATED",
+        planned_start=_START_DATE + timedelta(days=20),
+        planned_end=_START_DATE + timedelta(days=33),
+        execution_state="partially_executed",
+        actual_start=_START_DATE + timedelta(days=22),
+        actual_end=_START_DATE + timedelta(days=33),
+        pre_phase_days=3,
+        post_phase_days=5,
+    ),
+    Promotion(
+        promotion_id="PROMO-002",
+        store_id="STORE-002",
+        sku_id="SKU-001",
+        promotion_type="PRICE_PROMOTION",
+        discount_depth=0.25,
+        origin="NOVAFOODS_NEGOTIATED",
+        planned_start=_START_DATE + timedelta(days=25),
+        planned_end=_START_DATE + timedelta(days=38),
+        execution_state="not_executed",
+        actual_start=None,
+        actual_end=None,
+        pre_phase_days=3,
+        post_phase_days=5,
+    ),
+    Promotion(
+        promotion_id="PROMO-003",
+        store_id="STORE-003",
+        sku_id="SKU-001",
+        promotion_type="PRICE_PROMOTION",
+        discount_depth=0.15,
+        origin="NOVAFOODS_NEGOTIATED",
+        planned_start=_START_DATE + timedelta(days=15),
+        planned_end=_START_DATE + timedelta(days=28),
+        execution_state="executed",
+        actual_start=_START_DATE + timedelta(days=15),
+        actual_end=_START_DATE + timedelta(days=28),
+        pre_phase_days=3,
+        post_phase_days=5,
+    ),
+    Promotion(
+        promotion_id="PROMO-004",
+        store_id="STORE-003",
+        sku_id="SKU-003",
+        promotion_type="NON_PRICE_EVENT",
+        discount_depth=None,
+        origin="RETAILER_UNILATERAL",
+        planned_start=_START_DATE + timedelta(days=30),
+        planned_end=_START_DATE + timedelta(days=40),
+        execution_state="executed",
+        actual_start=_START_DATE + timedelta(days=30),
+        actual_end=_START_DATE + timedelta(days=40),
+        pre_phase_days=3,
+        post_phase_days=5,
+    ),
+    Promotion(
+        promotion_id="PROMO-005",
+        store_id="STORE-001",
+        sku_id="SKU-003",  # never physically assorted at STORE-001 -- see _ASSORTMENT
+        promotion_type="PRICE_PROMOTION",
+        discount_depth=0.30,
+        origin="NOVAFOODS_NEGOTIATED",
+        planned_start=_START_DATE + timedelta(days=10),
+        planned_end=_START_DATE + timedelta(days=20),
+        execution_state="executed",
+        actual_start=_START_DATE + timedelta(days=10),
+        actual_end=_START_DATE + timedelta(days=20),
+        pre_phase_days=3,
+        post_phase_days=5,
+    ),
+]
+
 DEFAULT_SIMULATION_CONFIG = SimulationConfig(
     run=RunConfig(seed=42, start_date=_START_DATE, num_days=60),
     stores=_STORES,
@@ -309,4 +551,12 @@ DEFAULT_SIMULATION_CONFIG = SimulationConfig(
     assortment=_ASSORTMENT,
     ordering_policies=_ORDERING_POLICIES,
     initial_inventory=_INITIAL_INVENTORY,
+    promotions=_PROMOTIONS,
+    promotion_demand=PromotionDemandConfig(
+        lift_log_range=(0.30, 0.60),
+        pre_phase_log_range=(-0.15, -0.05),
+        post_phase_log_range=(-0.25, -0.10),
+        discount_sensitivity=0.5,
+    ),
+    pre_stocking=PreStockingConfig(lead_days=10, multiplier=1.6),
 )

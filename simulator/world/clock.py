@@ -1,38 +1,44 @@
-"""Vertical Slice #2 driver -- the day-by-day forward generation loop
+"""Vertical Slice #3 driver -- the day-by-day forward generation loop
 over multiple (store, SKU) pairs, with explicit, config-driven physical
-assortment.
+assortment and Document 10 promotions.
 
 Sequencing per day, matching the approved causal chain exactly, per pair:
 
-    assortment -> sell-eligibility -> actual demand -> sales
-        -> order review -> inventory state transition
+    assortment -> sell-eligibility -> actual demand (+ promotional
+        modifier, where applicable) -> sales -> order review
+        (+ pre-stocking-adjusted policy, where applicable)
+        -> inventory state transition
 
 Each (store, SKU) pair is an independent physical replenishment
 relationship -- its own assortment, its own inventory, its own
-ordering policy -- with exactly one shared input across pairs: same-
-region stores see the identical regional demand shock on a given day
-(Document 6). There is no cross-store inventory or ordering
-interaction of any kind.
+ordering policy -- with two shared inputs across pairs: same-region
+stores see the identical regional demand shock on a given day
+(Document 6), and a promotion targeting a pair only ever affects that
+one pair. There is no cross-store inventory or ordering interaction of
+any kind, and promotions never create one either -- see promotions.py.
 
 Determinism / no-lookahead by construction: a single numpy Generator
 is advanced in a fixed order that depends only on the number of
-regions and (store, SKU) pairs -- never on the simulation horizon:
+regions, (store, SKU) pairs, and configured promotions -- never on the
+simulation horizon:
 
     setup (once, before the day loop):
         for each (store, SKU) pair, in config order:
             draw potential_demand (2 draws: store baseline, popularity)
+        for each promotion, in config.promotions order:
+            draw promotion magnitudes (3 draws: lift, pre, post)
 
     per day:
         draw regional shocks -- regions in config order (1 draw/region)
         for each (store, SKU) pair, in config order:
-            draw idiosyncratic demand noise (1 draw)
+            if sell-eligible: draw idiosyncratic demand noise (1 draw)
 
 This is what makes the truncation-invariance test
 (tests/simulator/world/test_vertical_slice.py) a structural check of
 the acyclicity rule, not just a convention to remember: if any
-generator ever depended on the horizon length, on future state, or on
-another pair's state, a truncated run would stop matching the prefix
-of a longer run.
+generator ever depended on the horizon length, on future state, on
+another pair's state, or on a promotion's own future dates, a
+truncated run would stop matching the prefix of a longer run.
 
 The Cartesian Store x SKU pair set is a simulation tracking universe,
 not a business assertion that every store carries every SKU. Physical
@@ -54,11 +60,20 @@ for a pair and only calls `orders.place_order_if_due` when it does.
 This isn't a new business rule -- Document 9's whole ordering-policy
 model presupposes a store-SKU pair that already has a physical shelf
 relationship to replenish.
+
+Promotions (Document 10) are wired in the same orchestrator-owns-the-
+gate style: demand.py receives a precomputed `promotional_log_modifier`
+scalar and has no awareness of Promotion at all; orders.py receives an
+already-adjusted `OrderingPolicy` (same policy, `order_up_to_level`
+temporarily boosted) and has no awareness of promotions either. Both
+promotions.py functions this module calls are pure, single-promotion,
+single-day lookups -- never given "the whole promotions table" to scan
+for what's coming.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 
 import numpy as np
@@ -68,6 +83,7 @@ from simulator.world import demand as demand_mod
 from simulator.world import entities as entities_mod
 from simulator.world import inventory as inventory_mod
 from simulator.world import orders as orders_mod
+from simulator.world import promotions as promotions_mod
 from simulator.world import sales as sales_mod
 from simulator.world.config import AssortmentWindow, SimulationConfig
 
@@ -84,6 +100,9 @@ class DayRecord:
     sell_eligible: bool
     available: bool
     potential_demand: float
+    promotion_id: str | None
+    promotion_phase: str | None
+    promotion_log_modifier: float
     actual_demand: int
     opening_inventory: int
     sales: int
@@ -127,12 +146,25 @@ def run_slice(config: SimulationConfig, num_days: int | None = None) -> SliceRes
         for store, sku in pairs
     }
 
+    # At most one promotion per pair (SimulationConfig.__post_init__
+    # enforces this as a stated slice limitation, not a Ground Truth
+    # rule) -- a plain dict lookup is therefore sufficient.
+    promotion_by_pair: dict[PairKey, promotions_mod.Promotion] = {
+        (promotion.store_id, promotion.sku_id): promotion for promotion in config.promotions
+    }
+
     rng = np.random.default_rng(config.run.seed)
 
     potential_demand: dict[PairKey, float] = {}
     for store, sku in pairs:  # fixed order -- see module docstring
         potential_demand[(store.store_id, sku.sku_id)] = demand_mod.draw_potential_demand(
             config.demand, store, rng
+        )
+
+    promotion_magnitudes: dict[str, promotions_mod.PromotionMagnitudes] = {}
+    for promotion in config.promotions:  # fixed order -- see module docstring
+        promotion_magnitudes[promotion.promotion_id] = promotions_mod.draw_promotion_magnitudes(
+            promotion, config.promotion_demand, rng
         )
 
     opening_inventory: dict[PairKey, int] = {
@@ -155,37 +187,57 @@ def run_slice(config: SimulationConfig, num_days: int | None = None) -> SliceRes
             key = (store.store_id, sku.sku_id)
             windows = assortment_windows[key]
             policy = config.ordering_policies[key]
+            promotion = promotion_by_pair.get(key)
 
             physically_assorted = assortment_mod.is_physically_assorted(windows, day)
             sell_eligible = assortment_mod.is_sell_eligible(windows, store, sku, day)
             available = assortment_mod.is_available(sell_eligible, opening_inventory[key])
 
             if sell_eligible:
+                if promotion is not None:
+                    phase_effect = promotions_mod.promotion_demand_phase_modifier(
+                        promotion, promotion_magnitudes[promotion.promotion_id], day
+                    )
+                else:
+                    phase_effect = promotions_mod.PromotionPhaseEffect(phase=None, log_modifier=0.0)
+
                 actual_demand = demand_mod.draw_actual_demand(
                     potential_demand[key],
                     day,
                     config.demand,
                     regional_shocks[store.region],
+                    phase_effect.log_modifier,
                     rng,
                 )
             else:
-                actual_demand = 0  # Document 6: demand generated only
-                # for sell-eligible store-SKU-day triples.
+                # Document 6: demand generated only for sell-eligible
+                # store-SKU-day triples. A promotion configured on a
+                # non-eligible pair (Promotion != Assortment,
+                # Document 5) simply never reaches this branch.
+                phase_effect = promotions_mod.PromotionPhaseEffect(phase=None, log_modifier=0.0)
+                actual_demand = 0
 
             sales_result = sales_mod.compute_sales(actual_demand, opening_inventory[key])
 
             # Order gate: an active replenishment relationship exists
             # only while this pair is sell-eligible. orders.py has no
-            # awareness of assortment and is never asked otherwise --
-            # this orchestrator decides, then calls it.
+            # awareness of assortment or promotions and is never asked
+            # otherwise -- this orchestrator decides, then calls it.
             if sell_eligible:
+                effective_policy = policy
+                if promotion is not None:
+                    boosted_level = promotions_mod.pre_stocking_order_up_to(
+                        promotion, day, policy.order_up_to_level, config.pre_stocking
+                    )
+                    if boosted_level != policy.order_up_to_level:
+                        effective_policy = replace(policy, order_up_to_level=boosted_level)
                 order = orders_mod.place_order_if_due(
                     store.store_id,
                     sku.sku_id,
                     day_index,
                     day,
                     opening_inventory[key],
-                    policy,
+                    effective_policy,
                     sku.units_per_case,
                 )
             else:
@@ -214,6 +266,9 @@ def run_slice(config: SimulationConfig, num_days: int | None = None) -> SliceRes
                     sell_eligible=sell_eligible,
                     available=available,
                     potential_demand=potential_demand[key],
+                    promotion_id=promotion.promotion_id if promotion is not None else None,
+                    promotion_phase=phase_effect.phase,
+                    promotion_log_modifier=phase_effect.log_modifier,
                     actual_demand=actual_demand,
                     opening_inventory=opening_inventory[key],
                     sales=sales_result.sales,

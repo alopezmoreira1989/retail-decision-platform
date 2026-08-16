@@ -1,10 +1,22 @@
 """Document 6 -- potential demand baseline and actual daily demand.
 
-Actual demand combines a shared per-(region, day) regional shock with
-independent per-(store, SKU, day) idiosyncratic noise, in log-space:
+Actual demand combines a shared per-(region, day) regional shock,
+independent per-(store, SKU, day) idiosyncratic noise, and (Document
+10) a promotional modifier, in log-space:
 
     log(actual_demand) = log(potential_demand) + log(seasonal_modifier)
-                          + regional_shock + idiosyncratic_noise
+                          + regional_shock + promotional_log_modifier
+                          + idiosyncratic_noise
+
+`promotional_log_modifier` is a precomputed scalar this module
+receives, never something it looks up itself -- demand.py has no
+awareness of the Promotion entity, no import from promotions.py, and
+no read access to discount_depth. That separation is what keeps
+Document 10's anti-double-counting rule structural rather than
+conventional: `draw_potential_demand` below is completely unchanged by
+this module's Vertical Slice #3 update, so discount_depth can never
+reach the price/popularity-driven structural baseline it must stay
+independent from.
 
 This is the generalization of Document 6's confirmed statistical
 property ("stores sharing the same region must receive correlated
@@ -18,10 +30,9 @@ process. `region` never deterministically maps to a demand multiplier:
 the shock is redrawn every day, so there is no fixed region -> demand
 lookup an analytical model could trivially recover.
 
-The promotional modifier (Document 10) is absent because promotions
-are out of scope for this slice. Only day-of-week seasonality is
-exercised; annual/holiday cyclicality is omitted, since a 60-day
-window can't meaningfully demonstrate an annual cycle.
+Only day-of-week seasonality is exercised; annual/holiday cyclicality
+is omitted, since a 60-day window can't meaningfully demonstrate an
+annual cycle.
 
 Price is not a separate multiplier here (Document 6: baked into
 potential demand once, via the product popularity factor -- never a
@@ -77,14 +88,19 @@ def draw_actual_demand(
     day: date,
     demand_config: DemandConfig,
     regional_shock: float,
+    promotional_log_modifier: float,
     rng: np.random.Generator,
 ) -> int:
-    """Document 6: actual demand = potential demand x seasonal modifier
-    x regional shock x idiosyncratic noise, combined in log-space.
+    """Document 6 + Document 10: actual demand = potential demand x
+    seasonal modifier x regional shock x promotional modifier x
+    idiosyncratic noise, combined in log-space.
 
     Exactly one scalar RNG draw (the idiosyncratic component) per
     call, so that truncating the simulation horizon can never change
-    an earlier day's draw.
+    an earlier day's draw. `promotional_log_modifier` is not drawn
+    here -- it is computed once per promotion, before the day loop, by
+    promotions.draw_promotion_magnitudes (see clock.py), and looked up
+    per day by promotions.promotion_demand_phase_modifier.
     """
     seasonal_modifier = demand_config.weekday_seasonal_modifiers[day.weekday()]
     idiosyncratic_noise = rng.normal(0.0, demand_config.idiosyncratic_noise_sigma)
@@ -92,6 +108,7 @@ def draw_actual_demand(
         math.log(potential_demand)
         + math.log(seasonal_modifier)
         + regional_shock
+        + promotional_log_modifier
         + idiosyncratic_noise
     )
     return max(0, round(math.exp(log_demand)))

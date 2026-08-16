@@ -1,6 +1,6 @@
-"""Invariant, determinism, and no-lookahead tests for Vertical Slice #2
+"""Invariant, determinism, and no-lookahead tests for Vertical Slice #3
 (N stores x N SKUs, explicit physical assortment, regional demand
-correlation).
+correlation, Document 10 promotions).
 """
 
 from __future__ import annotations
@@ -15,13 +15,20 @@ import pytest
 from simulator.world.assortment import is_available
 from simulator.world.clock import run_slice
 from simulator.world.config import DEFAULT_SIMULATION_CONFIG as CONFIG
-from simulator.world.config import AssortmentWindow
+from simulator.world.config import AssortmentWindow, Promotion
 from simulator.world.demand import draw_actual_demand, draw_regional_shocks
+from simulator.world.promotions import pre_stocking_order_up_to
 from simulator.world.sales import compute_sales
 
 NEVER_CARRIED_PAIR = ("STORE-001", "SKU-003")
 INELIGIBLE_SKU = "SKU-004"
 TEMPORAL_GAP_PAIR = ("STORE-001", "SKU-002")
+
+EXECUTED_PROMO_PAIR = ("STORE-003", "SKU-001")  # PROMO-003
+NOT_EXECUTED_PROMO_PAIR = ("STORE-002", "SKU-001")  # PROMO-002
+PARTIALLY_EXECUTED_PROMO_PAIR = ("STORE-001", "SKU-001")  # PROMO-001
+RETAILER_UNILATERAL_PAIR = ("STORE-003", "SKU-003")  # PROMO-004
+NON_ASSORTED_PROMO_PAIR = ("STORE-001", "SKU-003")  # PROMO-005
 
 
 def _by_pair(days):
@@ -36,6 +43,10 @@ def _by_pair(days):
 
 def _num_pairs(config) -> int:
     return len(config.stores) * len(config.skus)
+
+
+def _promotion(promotion_id: str) -> Promotion:
+    return next(p for p in CONFIG.promotions if p.promotion_id == promotion_id)
 
 
 # ---------------------------------------------------------------------
@@ -190,6 +201,364 @@ def test_orders_never_placed_when_not_sell_eligible():
 
 
 # ---------------------------------------------------------------------
+# Promotions (Document 10) -- structural validation
+# ---------------------------------------------------------------------
+
+
+def test_promotion_validation_rejects_bad_dates():
+    with pytest.raises(ValueError, match="planned_start"):
+        Promotion(
+            promotion_id="BAD",
+            store_id="STORE-001",
+            sku_id="SKU-001",
+            promotion_type="PRICE_PROMOTION",
+            discount_depth=0.1,
+            origin="NOVAFOODS_NEGOTIATED",
+            planned_start=date(2026, 2, 1),
+            planned_end=date(2026, 1, 1),
+            execution_state="not_executed",
+            actual_start=None,
+            actual_end=None,
+            pre_phase_days=3,
+            post_phase_days=5,
+        )
+
+
+def test_promotion_validation_non_price_event_rejects_discount():
+    with pytest.raises(ValueError, match="NON_PRICE_EVENT"):
+        Promotion(
+            promotion_id="BAD",
+            store_id="STORE-001",
+            sku_id="SKU-001",
+            promotion_type="NON_PRICE_EVENT",
+            discount_depth=0.1,
+            origin="RETAILER_UNILATERAL",
+            planned_start=date(2026, 1, 1),
+            planned_end=date(2026, 1, 10),
+            execution_state="not_executed",
+            actual_start=None,
+            actual_end=None,
+            pre_phase_days=3,
+            post_phase_days=5,
+        )
+
+
+def test_promotion_validation_price_promotion_requires_discount():
+    with pytest.raises(ValueError, match="PRICE_PROMOTION"):
+        Promotion(
+            promotion_id="BAD",
+            store_id="STORE-001",
+            sku_id="SKU-001",
+            promotion_type="PRICE_PROMOTION",
+            discount_depth=None,
+            origin="NOVAFOODS_NEGOTIATED",
+            planned_start=date(2026, 1, 1),
+            planned_end=date(2026, 1, 10),
+            execution_state="not_executed",
+            actual_start=None,
+            actual_end=None,
+            pre_phase_days=3,
+            post_phase_days=5,
+        )
+
+
+def test_promotion_validation_not_executed_rejects_actual_dates():
+    with pytest.raises(ValueError, match="not_executed"):
+        Promotion(
+            promotion_id="BAD",
+            store_id="STORE-001",
+            sku_id="SKU-001",
+            promotion_type="PRICE_PROMOTION",
+            discount_depth=0.1,
+            origin="NOVAFOODS_NEGOTIATED",
+            planned_start=date(2026, 1, 1),
+            planned_end=date(2026, 1, 10),
+            execution_state="not_executed",
+            actual_start=date(2026, 1, 1),
+            actual_end=date(2026, 1, 10),
+            pre_phase_days=3,
+            post_phase_days=5,
+        )
+
+
+def test_promotion_validation_executed_requires_actual_dates():
+    with pytest.raises(ValueError, match="requires actual_start"):
+        Promotion(
+            promotion_id="BAD",
+            store_id="STORE-001",
+            sku_id="SKU-001",
+            promotion_type="PRICE_PROMOTION",
+            discount_depth=0.1,
+            origin="NOVAFOODS_NEGOTIATED",
+            planned_start=date(2026, 1, 1),
+            planned_end=date(2026, 1, 10),
+            execution_state="executed",
+            actual_start=None,
+            actual_end=None,
+            pre_phase_days=3,
+            post_phase_days=5,
+        )
+
+
+def test_promotion_validation_executed_must_mirror_planned():
+    with pytest.raises(ValueError, match="mirror the planned dates"):
+        Promotion(
+            promotion_id="BAD",
+            store_id="STORE-001",
+            sku_id="SKU-001",
+            promotion_type="PRICE_PROMOTION",
+            discount_depth=0.1,
+            origin="NOVAFOODS_NEGOTIATED",
+            planned_start=date(2026, 1, 1),
+            planned_end=date(2026, 1, 10),
+            execution_state="executed",
+            actual_start=date(2026, 1, 2),  # doesn't mirror planned_start
+            actual_end=date(2026, 1, 10),
+            pre_phase_days=3,
+            post_phase_days=5,
+        )
+
+
+def test_overlapping_promotions_on_same_pair_rejected():
+    """Slice limitation, not a Ground Truth rule: at most one
+    promotion per (store, SKU) pair.
+    """
+    duplicate = replace(_promotion("PROMO-001"), promotion_id="PROMO-001-DUP")
+    with pytest.raises(ValueError, match="More than one promotion"):
+        replace(CONFIG, promotions=[*CONFIG.promotions, duplicate])
+
+
+# ---------------------------------------------------------------------
+# Promotions -- execution vs. plan (Document 10, Effect 1)
+# ---------------------------------------------------------------------
+
+
+def test_executed_promotion_lift_applies_only_during_actual_window():
+    promo = _promotion("PROMO-003")
+    result = run_slice(CONFIG)
+    rows = _by_pair(result.days)[EXECUTED_PROMO_PAIR]
+
+    for row in rows:
+        if promo.actual_start <= row.date <= promo.actual_end:
+            assert row.promotion_phase == "lift"
+            assert row.promotion_log_modifier > 0
+        elif (
+            promo.actual_start - timedelta(days=promo.pre_phase_days)
+            <= row.date
+            < promo.actual_start
+        ):
+            assert row.promotion_phase == "pre"
+            assert row.promotion_log_modifier < 0
+        elif (
+            promo.actual_end < row.date <= promo.actual_end + timedelta(days=promo.post_phase_days)
+        ):
+            assert row.promotion_phase == "post"
+            assert row.promotion_log_modifier < 0
+        else:
+            assert row.promotion_phase is None
+            assert row.promotion_log_modifier == 0.0
+
+
+def test_not_executed_promotion_produces_no_demand_lift_ever():
+    """A planned-but-not-executed promotion must never affect demand,
+    for its entire configured life -- Document 10, Effect 1.
+    """
+    result = run_slice(CONFIG)
+    rows = _by_pair(result.days)[NOT_EXECUTED_PROMO_PAIR]
+    for row in rows:
+        assert row.promotion_id == "PROMO-002"
+        assert row.promotion_phase is None
+        assert row.promotion_log_modifier == 0.0
+
+
+def test_partial_execution_respects_actual_not_planned_dates():
+    """Document 10's own illustrative scenario: a late start means no
+    lift for the days between the plan and the actual start, even
+    though the promotion was "supposed to" already be running.
+    """
+    promo = _promotion("PROMO-001")
+    assert promo.actual_start > promo.planned_start  # started late
+    result = run_slice(CONFIG)
+    rows_by_date = {r.date: r for r in _by_pair(result.days)[PARTIALLY_EXECUTED_PROMO_PAIR]}
+
+    late_start_gap_day = promo.planned_start  # planned to have started; didn't yet
+    assert rows_by_date[late_start_gap_day].promotion_phase != "lift"
+    assert rows_by_date[promo.actual_start].promotion_phase == "lift"
+
+
+# ---------------------------------------------------------------------
+# Promotions -- discount_depth anti-double-counting (Document 10)
+# ---------------------------------------------------------------------
+
+
+def test_discount_depth_never_affects_potential_demand():
+    """Regression guard: discount_depth must never reach
+    draw_potential_demand / Document 6's price-elasticity term. Removing
+    all promotions must not change any pair's potential_demand.
+    """
+    result_with_promotions = run_slice(CONFIG)
+    config_without_promotions = replace(CONFIG, promotions=[])
+    result_without_promotions = run_slice(config_without_promotions)
+
+    with_by_pair = _by_pair(result_with_promotions.days)
+    without_by_pair = _by_pair(result_without_promotions.days)
+    for key in CONFIG.ordering_policies:
+        assert with_by_pair[key][0].potential_demand == without_by_pair[key][0].potential_demand
+
+
+# ---------------------------------------------------------------------
+# Promotions -- pre-stocking (Document 10, Effect 2) and knowledge gating
+# ---------------------------------------------------------------------
+
+
+def test_prestocking_boost_applies_only_within_lead_window():
+    promo = _promotion("PROMO-003")
+    base_level = 150
+
+    before_window = promo.planned_start - timedelta(days=CONFIG.pre_stocking.lead_days + 1)
+    assert (
+        pre_stocking_order_up_to(promo, before_window, base_level, CONFIG.pre_stocking)
+        == base_level
+    )
+
+    inside_window = promo.planned_start - timedelta(days=1)
+    boosted = pre_stocking_order_up_to(promo, inside_window, base_level, CONFIG.pre_stocking)
+    assert boosted > base_level
+    assert boosted == round(base_level * CONFIG.pre_stocking.multiplier)
+
+    on_planned_start = promo.planned_start
+    assert (
+        pre_stocking_order_up_to(promo, on_planned_start, base_level, CONFIG.pre_stocking)
+        == base_level
+    )
+
+
+def test_retailer_unilateral_promotion_never_boosts_prestocking():
+    """NovaFoods cannot pre-stock for a promotion it doesn't know about
+    in advance -- origin gates pre-stocking, not execution or outcome.
+    """
+    promo = _promotion("PROMO-004")
+    assert promo.origin == "RETAILER_UNILATERAL"
+    base_level = 90
+    inside_what_would_be_the_window = promo.planned_start - timedelta(days=1)
+    assert (
+        pre_stocking_order_up_to(
+            promo, inside_what_would_be_the_window, base_level, CONFIG.pre_stocking
+        )
+        == base_level
+    )
+
+
+def test_known_promotion_prestocking_fires_even_when_not_executed():
+    """Case A: pre-stocking responds to the plan, not to execution --
+    a real order is placed ahead of a promotion that never actually runs.
+    """
+    result = run_slice(CONFIG)
+    promo = _promotion("PROMO-002")
+    window_start_index = (
+        promo.planned_start - CONFIG.run.start_date
+    ).days - CONFIG.pre_stocking.lead_days
+    window_end_index = (promo.planned_start - CONFIG.run.start_date).days
+    rows = _by_pair(result.days)[NOT_EXECUTED_PROMO_PAIR]
+    orders_in_window = [
+        r
+        for r in rows
+        if window_start_index <= r.day_index < window_end_index and r.order_placed_quantity > 0
+    ]
+    assert orders_in_window  # pre-stocking really happened
+    # and yet it produced zero demand lift (already asserted separately)
+
+
+def test_retailer_unilateral_executed_promotion_lifts_demand_without_prestocking():
+    """Case C: real execution still produces a real demand lift, even
+    though NovaFoods never knew about the promotion in advance.
+    """
+    result = run_slice(CONFIG)
+    promo = _promotion("PROMO-004")
+    rows = _by_pair(result.days)[RETAILER_UNILATERAL_PAIR]
+    assert any(
+        r.promotion_phase == "lift"
+        for r in rows
+        if promo.actual_start <= r.date <= promo.actual_end
+    )
+
+
+# ---------------------------------------------------------------------
+# Promotions -- interaction with assortment (Document 5 vs. Document 10)
+# ---------------------------------------------------------------------
+
+
+def test_promotion_on_non_assorted_pair_has_no_effect():
+    """Promotion != Assortment. A promotion configured on a pair that
+    is never physically assorted is a valid Phase 1 scenario -- it
+    must never create sell-eligibility, demand, sales, or orders.
+    """
+    result = run_slice(CONFIG)
+    rows = _by_pair(result.days)[NON_ASSORTED_PROMO_PAIR]
+    assert len(rows) == CONFIG.run.num_days
+    for row in rows:
+        assert row.promotion_id == "PROMO-005"  # the promotion "exists" for this pair...
+        assert row.sell_eligible is False  # ...but assortment still governs everything
+        assert row.promotion_phase is None
+        assert row.actual_demand == 0
+        assert row.sales == 0
+        assert row.order_placed_quantity == 0
+
+
+# ---------------------------------------------------------------------
+# Promotions -- no-lookahead
+# ---------------------------------------------------------------------
+
+
+def test_future_promotion_does_not_affect_earlier_days():
+    """Moving a known promotion's dates further into the future must
+    never change any day generated before its (new, later)
+    pre-stocking window -- and must not affect any other pair at all.
+    """
+    original_promo = _promotion("PROMO-003")
+    shift = timedelta(days=100)
+    shifted_promo = replace(
+        original_promo,
+        planned_start=original_promo.planned_start + shift,
+        planned_end=original_promo.planned_end + shift,
+        actual_start=original_promo.actual_start + shift,
+        actual_end=original_promo.actual_end + shift,
+    )
+    shifted_promotions = [
+        shifted_promo if p.promotion_id == "PROMO-003" else p for p in CONFIG.promotions
+    ]
+    shifted_config = replace(CONFIG, promotions=shifted_promotions)
+
+    original_result = run_slice(CONFIG)
+    shifted_result = run_slice(shifted_config)
+
+    original_by_pair = _by_pair(original_result.days)
+    shifted_by_pair = _by_pair(shifted_result.days)
+
+    # every other pair is completely unaffected by shifting PROMO-003
+    for key in CONFIG.ordering_policies:
+        if key != EXECUTED_PROMO_PAIR:
+            assert original_by_pair[key] == shifted_by_pair[key]
+
+    # the target pair matches before the (original) pre-stocking window starts...
+    window_start_index = (
+        original_promo.planned_start - CONFIG.run.start_date
+    ).days - CONFIG.pre_stocking.lead_days
+    original_rows = original_by_pair[EXECUTED_PROMO_PAIR]
+    shifted_rows = shifted_by_pair[EXECUTED_PROMO_PAIR]
+    for original_row, shifted_row in zip(original_rows, shifted_rows, strict=True):
+        if original_row.day_index < window_start_index:
+            assert original_row == shifted_row
+
+    # ...and genuinely diverges afterward, proving this isn't a vacuous check
+    assert any(
+        original_row != shifted_row
+        for original_row, shifted_row in zip(original_rows, shifted_rows, strict=True)
+        if original_row.day_index >= window_start_index
+    )
+
+
+# ---------------------------------------------------------------------
 # Regional demand correlation -- mechanism-level, not a statistical
 # result demanded from a small sample.
 # ---------------------------------------------------------------------
@@ -233,6 +602,7 @@ def test_actual_demand_applies_shared_regional_shock_identically():
         day=a_monday,
         demand_config=zero_idio_demand_config,
         regional_shock=0.3,
+        promotional_log_modifier=0.0,
         rng=np.random.default_rng(1),
     )
     demand_b = draw_actual_demand(
@@ -240,6 +610,7 @@ def test_actual_demand_applies_shared_regional_shock_identically():
         day=a_monday,
         demand_config=zero_idio_demand_config,
         regional_shock=0.3,
+        promotional_log_modifier=0.0,
         rng=np.random.default_rng(1),
     )
     assert demand_a == demand_b
@@ -254,6 +625,7 @@ def test_actual_demand_changes_with_regional_shock():
         day=a_monday,
         demand_config=zero_idio_demand_config,
         regional_shock=0.5,
+        promotional_log_modifier=0.0,
         rng=np.random.default_rng(1),
     )
     lower = draw_actual_demand(
@@ -261,9 +633,33 @@ def test_actual_demand_changes_with_regional_shock():
         day=a_monday,
         demand_config=zero_idio_demand_config,
         regional_shock=-0.5,
+        promotional_log_modifier=0.0,
         rng=np.random.default_rng(1),
     )
     assert higher > lower
+
+
+def test_actual_demand_changes_with_promotional_modifier():
+    zero_idio_demand_config = replace(CONFIG.demand, idiosyncratic_noise_sigma=0.0)
+    a_monday = date(2026, 1, 5)
+
+    with_lift = draw_actual_demand(
+        potential_demand=100.0,
+        day=a_monday,
+        demand_config=zero_idio_demand_config,
+        regional_shock=0.0,
+        promotional_log_modifier=0.4,
+        rng=np.random.default_rng(1),
+    )
+    without_lift = draw_actual_demand(
+        potential_demand=100.0,
+        day=a_monday,
+        demand_config=zero_idio_demand_config,
+        regional_shock=0.0,
+        promotional_log_modifier=0.0,
+        rng=np.random.default_rng(1),
+    )
+    assert with_lift > without_lift
 
 
 def test_idiosyncratic_noise_independent_between_calls():
@@ -279,6 +675,7 @@ def test_idiosyncratic_noise_independent_between_calls():
         day=a_monday,
         demand_config=CONFIG.demand,
         regional_shock=0.0,
+        promotional_log_modifier=0.0,
         rng=rng,
     )
     demand_b = draw_actual_demand(
@@ -286,6 +683,7 @@ def test_idiosyncratic_noise_independent_between_calls():
         day=a_monday,
         demand_config=CONFIG.demand,
         regional_shock=0.0,
+        promotional_log_modifier=0.0,
         rng=rng,
     )
     assert demand_a != demand_b
@@ -439,7 +837,8 @@ def test_truncation_invariance_no_lookahead():
     """The acyclicity / no-lookahead rule, made falsifiable: truncating
     the simulation horizon must never change an earlier day's output,
     for any (store, SKU) pair -- including pairs whose assortment
-    changes partway through the window.
+    changes partway through the window, and pairs affected by a
+    promotion.
     """
     full_result = run_slice(CONFIG, num_days=60)
     truncated_result = run_slice(CONFIG, num_days=30)
