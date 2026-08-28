@@ -1,6 +1,6 @@
 # CLAUDE.md — Retail Decision Platform
 
-Guidance for any Claude Code session working in this repository. Read this before making architectural decisions, generating data, or scaffolding new modules. When something here conflicts with a file under `docs/`, **this file wins** unless a human explicitly says otherwise — see [Known drift](#known-drift--pending-alignment) for why that matters right now.
+Guidance for any Claude Code session working in this repository. Read this before making architectural decisions, generating data, or scaffolding new modules. When something here conflicts with a file under `docs/`, **this file wins** unless a human explicitly says otherwise — see [Reconciliation history](#reconciliation-history) for background on why that rule exists.
 
 ## What this project is
 
@@ -146,9 +146,10 @@ Clear, maintainable code over clever code. Type hints where appropriate. Tests f
 - [README.md](README.md) — project overview, high-level architecture, roadmap.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system boundaries, RAW/Bronze/Silver/Gold, modularity, evaluation loop.
 - [docs/DATA_MODEL.md](docs/DATA_MODEL.md) — conceptual entities and relationships.
-- [docs/SIMULATION.md](docs/SIMULATION.md) — simulation philosophy (predates the two-phase formalization below — see next section).
+- [docs/SIMULATION.md](docs/SIMULATION.md) — simulation philosophy, the Phase 1/Phase 2 split, open design decisions.
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — branching, local environment, testing, CI.
+- [docs/world/](docs/world/) — the incremental, document-by-document design of Phase 1's business model (NovaFoods, products, retailers, stores, demand, ...), reviewed one document at a time before implementation. See [docs/world/README.md](docs/world/README.md) for the process and current status. Do not treat anything in this folder as implemented or final until its status says so.
 
-## Known drift — pending alignment
+## Reconciliation history
 
-The two-phase model (Phase 1/Phase 2, as formalized in this file) was adopted after `docs/SIMULATION.md`, `docs/ARCHITECTURE.md`, the README roadmap, and the live GitHub milestones/issues were first created. Those currently reflect an earlier, single-phase framing of "Synthetic Retail World" (old Milestone 2) and "Retailer Data Feeds" (old Milestone 3). Do not treat those docs or the existing milestone numbering as authoritative on the phase split until they've been reconciled — this file is authoritative in the meantime. A dedicated reconciliation pass is expected to: split old Milestone 2 into **2A (Retail World / Ground Truth)** and **2B (Retailer Feed Simulation)**, fold old Milestone 3's content into 2B, and split old Milestone 4 ("Data Platform") into **Data Ingestion & Data Quality** and **Bronze/Silver/Gold**. Until that pass happens, don't add new issues or docs content that assumes the old flat M1–M10 structure is final.
+`docs/SIMULATION.md`, `docs/ARCHITECTURE.md`, `docs/DATA_MODEL.md`, the README roadmap, and the GitHub milestones/issues were originally created under an earlier, single-phase framing ("Synthetic Retail World" / "Retailer Data Feeds") before the two-phase model was formalized here. A reconciliation pass has since brought all of them into agreement with this file: GitHub milestones were split (old M2 → **M2A** Retail World/Ground Truth + **M2B** Retailer Feed Simulation; old M4 → **M3** Data Ingestion & Data Quality + **M4** Bronze/Silver/Gold), and the docs above were rewritten accordingly. If a doc or issue ever again describes the old flat M1–M10, single-phase structure, treat that as drift to be fixed, not as current fact — this file remains authoritative.

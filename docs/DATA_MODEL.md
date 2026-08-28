@@ -17,7 +17,7 @@ Several entities here span the Phase 1 / Phase 2 boundary described in [SIMULATI
 - **Calendar / Event** — dates, holidays, and other temporal markers (e.g. regional events) that affect demand.
 - **Sale (POS / sell-out)** — an observed unit of sales activity: ticket-level, daily, or weekly aggregate depending on retailer.
 - **Order** — a replenishment order placed for a store/product.
-- **Inventory position** — reported stock on hand for a store/product at a point in time.
+- **Inventory position** — Phase 1: `physical_inventory`, the true latent stock for a store/product on a given day, never directly observed. Phase 2: retailer-reported inventory, an imperfect observation gated by the retailer's `shares_inventory_visibility` — see [docs/world/08-inventory.md](world/08-inventory.md).
 - **Commercial Agent** — a fictional person who reviews recommendations and may visit stores.
 - **Store Visit** — a recorded (simulated) visit by a commercial agent, which may itself be a source of ground-truth-adjacent signal or of feedback.
 - **Recommendation** — a generated, prioritized, explainable output of the platform, tied to one or more underlying findings.
@@ -50,6 +50,7 @@ A retailer is split across two layers, matching the Phase 1 / Phase 2 boundary i
   - reporting frequency per feed (daily, weekly, delayed-by-N-days)
   - identifier scheme (internal SKU vs. EAN/UPC, internal store code vs. address-based)
   - aggregation level (ticket-level vs. daily vs. weekly sell-out)
+  - delivery mechanism and file format per feed (e.g. file drop, API-like, DB-like; CSV, XLSX, Parquet — see [SIMULATION.md#source-artifacts-delivery-mechanism-and-landing](SIMULATION.md#source-artifacts-delivery-mechanism-and-landing))
   - typical data-quality issues and their rates (missingness, duplication, mapping errors)
   - which feeds are provided at all (e.g. a retailer that never sends promotion data)
 

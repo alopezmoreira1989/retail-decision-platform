@@ -50,13 +50,15 @@ Phase 1 — Retail World / Ground Truth (hidden, persisted, versioned)
         ↓ observed/degraded by Phase 2, per retailer feed profile
 Phase 2 — Retailer Feed Simulation
         ↓ produces
-RAW                                                          ← Decision Platform starts here
+Source artifact   — a CSV, an XLSX, a DB-like read: what the retailer's systems hand over
+        ↓ via a delivery mechanism (file drop, API-like, DB-like — retailer-profile-specific)
+Landing / exchange — e.g. a file-exchange endpoint for file-based feeds; other endpoints for other mechanisms
         ↓ orchestrated ingestion
-Bronze      — raw structure preserved, per retailer, schema-on-read
+RAW (BigQuery)                                              ← Decision Platform starts here
         ↓ data quality checks + identifier resolution + normalization
-Silver      — canonical entities, one schema, retailer origin preserved as lineage
+Silver (BigQuery)  — canonical entities, one schema, retailer origin preserved as lineage
         ↓ feature engineering
-Gold        — analysis-ready marts (store-product-day, inventory position, etc.)
+Gold (BigQuery)    — analysis-ready marts (store-product-day, inventory position, etc.)
         ↓ inference
 Detection / prediction models — availability, underperformance, inventory anomaly, assortment
         ↓ generation + scoring
@@ -69,17 +71,21 @@ Feedback
 Model evaluation / improvement
 ```
 
+### Source artifact, delivery mechanism, and landing
+
+Phase 2's output is not RAW by itself — it is a **source artifact** (a CSV, an XLSX, a DB-like read), handed off via a **delivery mechanism** (file drop, API-like, DB-like) to a **landing/exchange** endpoint, which ingestion then reads to produce RAW. These are kept as distinct layers, never collapsed into one "data source" concept. Which mechanism and format a given retailer profile plausibly uses is a Phase 2 characteristic (the same category as schema, frequency, and latency); actually operating that mechanism — writing to an exchange endpoint, serving an API — is ingestion-adjacent tooling, outside both Simulation phases. See [SIMULATION.md#source-artifacts-delivery-mechanism-and-landing](SIMULATION.md#source-artifacts-delivery-mechanism-and-landing) for the full reasoning, including why format is deliberately plural (XLSX for master/small feeds, CSV for large file-based feeds, Parquet as a plausible but non-default option, API-like and DB-like as structured alternatives) and how ticket-level POS fits in as a Phase 2 representation choice, never a Phase 1 resolution.
+
 ### RAW
 
-Phase 2's output: retailer-specific, as-received by the (simulated) organization. No two retailers are guaranteed to agree on identifiers, field names, aggregation level, frequency, or completeness. RAW is never mutated after landing. RAW is the first artifact the Decision Platform is allowed to touch — everything upstream of it (Phase 1 and Phase 2) is Simulation.
+What ingestion produces after reading a retailer's source artifact from its landing/exchange endpoint: retailer-specific, as-received by the (simulated) organization. No two retailers are guaranteed to agree on identifiers, field names, aggregation level, frequency, or completeness. RAW is never mutated after landing. RAW is the first artifact the Decision Platform is allowed to touch — everything upstream of it (Phase 1, Phase 2, the source artifact, and its delivery/landing) is Simulation or Simulation-adjacent tooling, never Decision Platform code.
 
 ### Bronze
 
-RAW feeds ingested and landed in a consistent *storage* format (Parquet, partitioned by retailer/feed/date) without altering their *logical* structure. Bronze is the immutable, replayable record of "what we received and when."
+RAW feeds landed in BigQuery in a consistent *storage* structure, partitioned by retailer/feed/date, without altering their *logical* structure. Bronze is the immutable, replayable record of "what we received and when." Where a retailer profile's aggregation level is ticket-level rather than daily store × SKU, Bronze preserves that ticket-level structure as received — re-aggregation to the canonical daily grain happens in Silver, not here.
 
 ### Silver
 
-Bronze conformed into canonical entities (store, product, sale, inventory position, order, promotion, ...) with resolved identifiers and a single schema per entity, regardless of source retailer. Data quality rules are applied and violations are tracked, not silently dropped. Retailer origin and ingestion lineage are preserved as metadata.
+Bronze conformed into canonical entities (store, product, sale, inventory position, order, promotion, ...) with resolved identifiers and a single schema per entity, regardless of source retailer. This is also where any ticket-level POS gets re-aggregated to the canonical store × SKU × day grain that every other retailer profile already reports at (see [SIMULATION.md](SIMULATION.md) — Phase 1's Sales is always daily store × SKU; ticket-level is only ever a Phase 2 observation choice). Data quality rules are applied and violations are tracked, not silently dropped. Retailer origin and ingestion lineage are preserved as metadata.
 
 ### Gold
 
@@ -96,6 +102,20 @@ Consumes findings from one or more detection models, deduplicates/merges related
 ### Feedback
 
 Commercial agent responses to recommendations (confirmed, rejected, already resolved, wrong data, wrong assortment, temporary situation, other) are captured as structured data and become an input to evaluation and, later, model recalibration.
+
+## Warehouse technology and local tooling
+
+**BigQuery is the warehouse** — RAW, Silver, and Gold are BigQuery datasets. It sits after ingestion only; neither Phase 1 nor Phase 2 code ever connects to it directly, and it plays no role in Simulation. The simulator produces source artifacts (see above); the ingestion platform is what loads them into BigQuery.
+
+**DuckDB is local development tooling, not a required hop.** It's useful for local iteration, inspecting generated Parquet output, prototyping transformations, and running tests without cloud dependencies — but `Simulator → DuckDB → BigQuery` is not the architecture. The path is `Simulator → source artifact → ingestion → BigQuery`; DuckDB sits alongside that path for local development, not on it.
+
+## Retention
+
+Configurable, not hardcoded — retention is operational control over data growth, not a claim that older business reality stops existing:
+
+- **RAW and Silver** default to a configurable retention window (initial default: 24 months), implemented via BigQuery table partitioning on business/event date with partition-level expiration — never row-by-row `DELETE`.
+- **Gold** has its own, separately configurable retention, typically longer, since Gold marts are small and aggregated and valuable for longitudinal comparison.
+- **Source artifacts** (at their landing/exchange endpoint) have an independent retention policy, not tied to warehouse expiration. A source file is never deleted merely because its BigQuery copy aged out.
 
 ## Orchestration
 
