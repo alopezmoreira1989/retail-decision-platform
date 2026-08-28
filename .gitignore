@@ -23,6 +23,7 @@ data/
 *.duckdb
 *.duckdb.wal
 simulator/feeds/output/
+simulator/reference/output/
 
 # dbt
 transformations/target/

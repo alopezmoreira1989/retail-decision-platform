@@ -142,6 +142,7 @@ class SliceResult:
     config: SimulationConfig
     stores: list[entities_mod.Store]
     skus: list[entities_mod.Sku]
+    products: list[entities_mod.Product]
     days: list[DayRecord]
     orders: list[orders_mod.Order]
 
@@ -157,6 +158,10 @@ def run_slice(config: SimulationConfig, num_days: int | None = None) -> SliceRes
 
     stores = [entities_mod.build_store(sc) for sc in config.stores]
     skus = [entities_mod.build_sku(kc) for kc in config.skus]
+    # Static reference data -- no RNG involved, built once, before (and
+    # entirely independent of) the day loop below. Adding this has zero
+    # effect on draw order or truncation invariance.
+    products = [entities_mod.build_product(pc) for pc in config.products]
 
     # Fixed pair order: stores outer, SKUs inner, both in config order.
     # This is the tracking universe (see module docstring) -- every
@@ -319,4 +324,6 @@ def run_slice(config: SimulationConfig, num_days: int | None = None) -> SliceRes
 
             opening_inventory[key] = closing_inventory
 
-    return SliceResult(config=config, stores=stores, skus=skus, days=days, orders=orders)
+    return SliceResult(
+        config=config, stores=stores, skus=skus, products=products, days=days, orders=orders
+    )

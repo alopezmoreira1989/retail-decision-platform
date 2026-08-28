@@ -15,8 +15,22 @@ import pytest
 from simulator.world.assortment import is_available
 from simulator.world.clock import run_slice
 from simulator.world.config import DEFAULT_SIMULATION_CONFIG as CONFIG
-from simulator.world.config import AssortmentWindow, Promotion
+from simulator.world.config import (
+    AssortmentWindow,
+    ProductConfig,
+    Promotion,
+    SkuConfig,
+    SkuUnavailabilityWindow,
+    StoreClosureWindow,
+    StoreConfig,
+)
 from simulator.world.demand import draw_actual_demand, draw_regional_shocks
+from simulator.world.entities import (
+    build_sku,
+    build_store,
+    sku_lifecycle_state,
+    store_lifecycle_state,
+)
 from simulator.world.promotions import pre_stocking_order_up_to
 from simulator.world.sales import compute_sales
 
@@ -1018,3 +1032,136 @@ def test_truncation_invariance_no_lookahead():
     cutoff = CONFIG.run.start_date
     full_orders_in_window = [o for o in full_result.orders if (o.order_date - cutoff).days < 30]
     assert truncated_result.orders == full_orders_in_window
+
+
+# ---------------------------------------------------------------------
+# NovaFoods reference-data checkpoint: Document 4/2 fields now
+# implemented in StoreConfig/SkuConfig, plus the two lifecycle states
+# (CLOSED, TEMPORARILY_UNAVAILABLE) that were approved but previously
+# missing. Exercised here via isolated, ad-hoc entities -- not the
+# shared 60-day CONFIG world, per config.py's own stated reasoning
+# (avoid introducing a new, untested interaction into an already-tuned
+# scenario).
+# ---------------------------------------------------------------------
+
+
+def test_default_config_stores_carry_the_approved_document4_reference_fields():
+    for store in CONFIG.stores:
+        assert store.open_date < CONFIG.run.start_date
+        assert store.address
+        assert store.city
+        assert store.state_province
+        assert isinstance(store.lat, float)
+        assert isinstance(store.long, float)
+        # preserved existing behavior -- no store in this world is permanently closed
+        assert store.closed_date is None
+
+
+def test_default_config_skus_carry_the_approved_document2_reference_fields():
+    product_ids = {product.product_id for product in CONFIG.products}
+    assert len(CONFIG.products) == len(CONFIG.skus)  # one Product per SKU in this catalogue
+    for sku in CONFIG.skus:
+        assert sku.product_id in product_ids
+        assert sku.pack_size
+        assert sku.country == "US"
+        # preserved existing behavior -- no SKU in this world is temporarily unavailable
+        assert sku.temporarily_unavailable is None
+
+
+def test_product_hierarchy_has_a_real_crossed_brand_category_structure():
+    categories = {p.category for p in CONFIG.products}
+    brands = {p.brand for p in CONFIG.products}
+    assert len(categories) > 1
+    assert len(brands) > 1
+    subcategories_by_brand = defaultdict(set)
+    for product in CONFIG.products:
+        subcategories_by_brand[product.brand].add(product.subcategory)
+    # Document 2: "Brand is a crossed axis" -- at least one brand spans
+    # more than one subcategory, i.e. brand is never nested under category.
+    assert any(len(subcats) > 1 for subcats in subcategories_by_brand.values())
+
+
+def test_no_price_field_anywhere_in_the_product_hierarchy():
+    price_like_names = {"price", "list_price", "unit_price", "wholesale_price"}
+    assert price_like_names.isdisjoint(ProductConfig.__dataclass_fields__)
+    assert price_like_names.isdisjoint(SkuConfig.__dataclass_fields__)
+
+
+def test_product_id_foreign_key_validation_rejects_unknown_product():
+    bad_sku = replace(CONFIG.skus[0], sku_id="SKU-999", product_id="PRODUCT-999")
+    with pytest.raises(ValueError, match="does not exist in `products`"):
+        replace(CONFIG, skus=[*CONFIG.skus, bad_sku])
+
+
+def _isolated_store(**overrides):
+    base = StoreConfig(
+        store_id="STORE-TEST",
+        retailer_id="RETAILER-001",
+        store_scale_class=2,
+        format="Supermarket",
+        region="North",
+        address="1 Test St",
+        city="Testville",
+        state_province="TS",
+        lat=0.0,
+        long=0.0,
+        open_date=date(2020, 1, 1),
+        closure=None,
+        closed_date=None,
+    )
+    return build_store(replace(base, **overrides))
+
+
+def _isolated_sku(**overrides):
+    base = SkuConfig(
+        sku_id="SKU-TEST",
+        product_id="PRODUCT-TEST",
+        units_per_case=12,
+        pack_size="1 unit",
+        country="US",
+        discontinued_on=None,
+        temporarily_unavailable=None,
+    )
+    return build_sku(replace(base, **overrides))
+
+
+def test_store_closed_state_is_terminal():
+    store = _isolated_store(closed_date=date(2026, 2, 1))
+    assert store_lifecycle_state(store, date(2026, 1, 31)) == "OPEN"
+    assert store_lifecycle_state(store, date(2026, 2, 1)) == "CLOSED"
+    assert store_lifecycle_state(store, date(2026, 6, 1)) == "CLOSED"  # terminal, no return
+
+
+def test_store_closed_takes_precedence_over_temporarily_closed():
+    store = _isolated_store(
+        closed_date=date(2026, 2, 1),
+        closure=StoreClosureWindow(effective_from=date(2026, 1, 15), effective_to=date(2026, 3, 1)),
+    )
+    # inside the temporary-closure window AND past closed_date -> CLOSED wins (terminal)
+    assert store_lifecycle_state(store, date(2026, 2, 15)) == "CLOSED"
+    # inside the temporary-closure window but before closed_date -> TEMPORARILY_CLOSED
+    assert store_lifecycle_state(store, date(2026, 1, 20)) == "TEMPORARILY_CLOSED"
+
+
+def test_sku_temporarily_unavailable_is_non_terminal():
+    sku = _isolated_sku(
+        temporarily_unavailable=SkuUnavailabilityWindow(
+            effective_from=date(2026, 1, 10), effective_to=date(2026, 1, 20)
+        )
+    )
+    assert sku_lifecycle_state(sku, date(2026, 1, 9)) == "ACTIVE"
+    assert sku_lifecycle_state(sku, date(2026, 1, 15)) == "TEMPORARILY_UNAVAILABLE"
+    assert sku_lifecycle_state(sku, date(2026, 1, 21)) == "ACTIVE"  # resumed, non-terminal
+
+
+def test_sku_discontinued_takes_precedence_over_temporarily_unavailable():
+    sku = _isolated_sku(
+        discontinued_on=date(2026, 1, 15),
+        temporarily_unavailable=SkuUnavailabilityWindow(
+            effective_from=date(2026, 1, 10), effective_to=date(2026, 1, 20)
+        ),
+    )
+    # inside the unavailability window AND past discontinued_on -> DISCONTINUED wins (terminal)
+    assert sku_lifecycle_state(sku, date(2026, 1, 16)) == "DISCONTINUED"
+    # inside the unavailability window but before discontinued_on -> TEMPORARILY_UNAVAILABLE
+    assert sku_lifecycle_state(sku, date(2026, 1, 12)) == "TEMPORARILY_UNAVAILABLE"

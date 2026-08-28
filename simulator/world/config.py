@@ -47,12 +47,44 @@ class StoreClosureWindow:
 
 
 @dataclass(frozen=True)
+class SkuUnavailabilityWindow:
+    """Document 2 -- ACTIVE -> TEMPORARILY_UNAVAILABLE -> ACTIVE
+    (resumed). Non-terminal, so (unlike `discontinued_on`) this needs a
+    full window, not just a cutover date -- exactly the same shape as
+    `StoreClosureWindow`, reused rather than reinvented for the
+    analogous SKU-side concept. Product identity, category, brand, and
+    pack size are unaffected -- the SKU reverts to ACTIVE automatically
+    once the window ends, with nothing to reset.
+    """
+
+    effective_from: date
+    effective_to: date
+
+    def __post_init__(self) -> None:
+        if self.effective_from > self.effective_to:
+            raise ValueError(
+                "SkuUnavailabilityWindow: effective_from must not be after effective_to."
+            )
+
+
+@dataclass(frozen=True)
 class StoreConfig:
-    """Document 4 fields this slice actually exercises. `region` is a
-    minimal grouping label only -- Document 4 explicitly leaves the
-    concrete meaning of region as an implementation decision; no real
-    geography, boundaries, or demographics are modeled. `closure` is
-    None for a store that is never temporarily closed in this config.
+    """Document 4 fields. `region` is a minimal grouping label only --
+    Document 4 explicitly leaves the concrete meaning of region as an
+    implementation decision; no real geography, boundaries, or
+    demographics are modeled beyond the address/city/state/lat/long
+    fields themselves, which Document 4 treats as ordinary master data
+    (no Latent/Observable split, unlike `store_scale_class`).
+
+    `closure` is None for a store never temporarily closed. `closed_date`
+    is None for a store never permanently closed -- Document 4: CLOSED
+    is terminal (unlike TEMPORARILY_CLOSED), so a single cutover date is
+    enough, the same pattern `discontinued_on` already uses for SKUs.
+    A store may carry `closure` and/or `closed_date` independently; none
+    of the six stores in this slice's world set `closed_date` (see
+    module-level `_STORES` comment -- preserving existing approved
+    lifecycle behavior for all of them was a deliberate choice, not an
+    oversight).
     """
 
     store_id: str
@@ -60,7 +92,14 @@ class StoreConfig:
     store_scale_class: int
     format: str
     region: str
+    address: str
+    city: str
+    state_province: str
+    lat: float
+    long: float
+    open_date: date
     closure: StoreClosureWindow | None
+    closed_date: date | None = None
 
 
 @dataclass(frozen=True)
@@ -68,11 +107,46 @@ class SkuConfig:
     """`discontinued_on` is None for a SKU that stays ACTIVE for the
     whole run. Document 2: DISCONTINUED is terminal, so a single
     cutover date is enough -- no window, unlike store closure.
+    `temporarily_unavailable` is None for a SKU that never enters that
+    state -- none of the four SKUs in this slice's world do (see
+    module-level `_SKUS` comment); the mechanism exists and is
+    exercised only in isolated unit tests, to avoid introducing a new,
+    untested interaction into the already-tuned 60-day scenario.
+
+    `product_id` is a FK into `SimulationConfig.products` -- Document
+    2's Product level, country-agnostic, distinct from the SKU itself
+    (country- and pack-size-specific). `pack_size` and `country` are
+    SKU-level attributes per Document 2's own illustrative example
+    ("8 oz bag, US" vs. "235 g bag, Canada").
     """
 
     sku_id: str
+    product_id: str
     units_per_case: int
+    pack_size: str
+    country: str
     discontinued_on: date | None
+    temporarily_unavailable: SkuUnavailabilityWindow | None = None
+
+
+@dataclass(frozen=True)
+class ProductConfig:
+    """Document 2's Product level -- NovaFoods' own canonical
+    Category/Subcategory/Brand hierarchy, universal across retailers
+    (never retailer-specific, never derived from any Phase 2
+    observation). `category`/`subcategory` are NovaFoods' own internal
+    taxonomy; `brand` is a crossed axis, not nested under category.
+    Deliberately no `price` field -- Document 2 keeps wholesale price a
+    separate, time-versioned record, and this slice does not implement
+    a price concept at all (see the POS source-contract stop-condition
+    report); Product Master must not reintroduce it here either.
+    """
+
+    product_id: str
+    product_name: str
+    category: str
+    subcategory: str
+    brand: str
 
 
 @dataclass(frozen=True)
@@ -254,6 +328,7 @@ class SimulationConfig:
     run: RunConfig
     stores: list[StoreConfig]
     skus: list[SkuConfig]
+    products: list[ProductConfig]
     regions: list[str]  # fixed draw order for regional shocks each day
     demand: DemandConfig
     # Retailer-level (Document 5, Layer 2). Single-retailer scope in
@@ -289,7 +364,19 @@ class SimulationConfig:
 
         Also enforces this slice's stated limitation (not a Ground
         Truth rule): at most one promotion per (store_id, sku_id).
+
+        Also validates Document 2's Product -> SKU relationship: every
+        SKU's `product_id` must reference a real entry in `products` --
+        a Product Master can only ever be as coherent as this FK is.
         """
+        product_ids = {product.product_id for product in self.products}
+        for sku in self.skus:
+            if sku.product_id not in product_ids:
+                raise ValueError(
+                    f"SKU {sku.sku_id!r} references product_id {sku.product_id!r}, "
+                    f"which does not exist in `products`."
+                )
+
         for (store_id, sku_id), windows in self.assortment.items():
             if windows and not self.distribution_eligibility.get(sku_id, True):
                 raise ValueError(
@@ -320,6 +407,19 @@ _START_DATE = date(2026, 1, 1)
 # previously). store_scale_class now spans the full 1-4 range; 4 of
 # 6 format taxonomy values used, not maximized. STORE-006 carries a
 # closure window (Document 4) -- see below.
+#
+# open_date / address / city / state_province / lat / long / closed_date
+# are the Document 4 fields added for the NovaFoods Store Master
+# (simulator/reference/). All six stores keep closed_date=None (default)
+# -- permanent closure is a structural capability now, exercised only
+# in isolated unit tests, not in this shared 60-day world, to avoid
+# introducing a new, untested interaction into an already-tuned
+# scenario (same discipline already applied to SkuUnavailabilityWindow
+# below). Geography values are plausible but not load-bearing for any
+# existing mechanic -- region's meaning stays exactly what Document 4
+# already established ("a minimal grouping label... no real geography
+# modeled"), these are independent, purely descriptive master-data
+# fields, same category as `format`.
 _STORES = [
     StoreConfig(
         store_id="STORE-001",
@@ -327,6 +427,12 @@ _STORES = [
         store_scale_class=3,
         format="Supermarket",
         region="North",
+        address="100 Main St",
+        city="Springfield",
+        state_province="IL",
+        lat=39.7817,
+        long=-89.6501,
+        open_date=date(2015, 3, 1),
         closure=None,
     ),
     StoreConfig(
@@ -335,6 +441,12 @@ _STORES = [
         store_scale_class=2,
         format="Convenience",
         region="North",
+        address="245 Oak Ave",
+        city="Madison",
+        state_province="WI",
+        lat=43.0731,
+        long=-89.4012,
+        open_date=date(2018, 6, 15),
         closure=None,
     ),
     StoreConfig(
@@ -343,6 +455,12 @@ _STORES = [
         store_scale_class=3,
         format="Supermarket",
         region="South",
+        address="88 Ranch Rd",
+        city="Round Rock",
+        state_province="TX",
+        lat=30.5083,
+        long=-97.6789,
+        open_date=date(2012, 11, 20),
         closure=None,
     ),
     StoreConfig(
@@ -351,6 +469,12 @@ _STORES = [
         store_scale_class=4,
         format="Hypermarket",
         region="South",
+        address="1400 River Rd",
+        city="Baton Rouge",
+        state_province="LA",
+        lat=30.4515,
+        long=-91.1871,
+        open_date=date(2020, 1, 10),
         closure=None,
     ),
     StoreConfig(
@@ -359,6 +483,12 @@ _STORES = [
         store_scale_class=2,
         format="Convenience",
         region="Central",
+        address="512 Prairie Ln",
+        city="Wichita",
+        state_province="KS",
+        lat=37.6872,
+        long=-97.3301,
+        open_date=date(2016, 9, 1),
         closure=None,
     ),
     StoreConfig(
@@ -367,6 +497,14 @@ _STORES = [
         store_scale_class=1,
         format="Discount",
         region="Central",
+        address="77 Dodge St",
+        city="Omaha",
+        state_province="NE",
+        lat=41.2565,
+        long=-95.9345,
+        # Newest store in this world -- consistent with the closure
+        # comment below already describing it as "a new store."
+        open_date=date(2025, 11, 1),
         # Document 4: OPEN -> TEMPORARILY_CLOSED -> OPEN, days 15-22.
         # A new store (not one of the original three), so this event
         # has zero interaction with any existing promotion or the
@@ -386,14 +524,78 @@ _STORES = [
     ),
 ]
 
+# Document 2's Product level -- NovaFoods' own canonical Category/
+# Subcategory/Brand hierarchy, one Product per existing SKU (the
+# simplest, most conservative catalogue: no SKU shares a Product with
+# another in this slice, so nothing about existing per-SKU business
+# behavior implies anything about a sibling SKU). 2 categories, 4
+# subcategories, 2 brands -- enough to exercise a real crossed-axis
+# hierarchy without inventing more catalogue than 4 SKUs warrants.
+# Illustrative, fictional names, consistent with Document 2's own
+# illustrative examples (not a reuse of any real company's catalogue).
+_PRODUCTS: list[ProductConfig] = [
+    ProductConfig(
+        product_id="PRODUCT-001",
+        product_name="RidgeCrest Kettle-Style Sea Salt Chips",
+        category="Salty Snacks",
+        subcategory="Potato Chips",
+        brand="RidgeCrest",
+    ),
+    ProductConfig(
+        product_id="PRODUCT-002",
+        product_name="RidgeCrest Pretzel Twists",
+        category="Salty Snacks",
+        subcategory="Pretzels",
+        brand="RidgeCrest",
+    ),
+    ProductConfig(
+        product_id="PRODUCT-003",
+        product_name="Meadowline Sparkling Water, Citrus",
+        category="Beverages",
+        subcategory="Sparkling Water",
+        brand="Meadowline",
+    ),
+    ProductConfig(
+        product_id="PRODUCT-004",
+        product_name="Meadowline Juice Blend, Tropical",
+        category="Beverages",
+        subcategory="Juices & Blends",
+        brand="Meadowline",
+    ),
+]
+
 # SKU-003's discontinued_on is set below, after promotions are defined,
 # so the date can be chosen with PROMO-004's window visibly in mind.
+# temporarily_unavailable stays None (default) for all four SKUs --
+# same discipline as StoreConfig.closed_date above: the mechanism is
+# implemented and unit-tested, not exercised in this shared world, to
+# avoid a new, untested interaction with the already-tuned scenario
+# (SKU-003 in particular already carries a real discontinuation and
+# sits inside PROMO-004's demonstrated interaction history -- see the
+# comment below).
 _SKUS = [
-    SkuConfig(sku_id="SKU-001", units_per_case=12, discontinued_on=None),
-    SkuConfig(sku_id="SKU-002", units_per_case=24, discontinued_on=None),
+    SkuConfig(
+        sku_id="SKU-001",
+        product_id="PRODUCT-001",
+        units_per_case=12,
+        pack_size="8 oz bag",
+        country="US",
+        discontinued_on=None,
+    ),
+    SkuConfig(
+        sku_id="SKU-002",
+        product_id="PRODUCT-002",
+        units_per_case=24,
+        pack_size="10 oz bag",
+        country="US",
+        discontinued_on=None,
+    ),
     SkuConfig(
         sku_id="SKU-003",
+        product_id="PRODUCT-003",
         units_per_case=12,
+        pack_size="12-pack cans",
+        country="US",
         # Document 2: ACTIVE -> DISCONTINUED, day 54. Scenario
         # configuration, not a business rule: chosen (not
         # STORE-004/SKU-003's lead_time_days) to land inside a delivery
@@ -411,7 +613,14 @@ _SKUS = [
         # interaction this checkpoint should not introduce.
         discontinued_on=_START_DATE + timedelta(days=54),
     ),
-    SkuConfig(sku_id="SKU-004", units_per_case=24, discontinued_on=None),
+    SkuConfig(
+        sku_id="SKU-004",
+        product_id="PRODUCT-004",
+        units_per_case=24,
+        pack_size="8-pack cartons",
+        country="US",
+        discontinued_on=None,
+    ),
 ]
 
 _REGIONS = ["North", "South", "Central"]
@@ -687,6 +896,7 @@ DEFAULT_SIMULATION_CONFIG = SimulationConfig(
     run=RunConfig(seed=42, start_date=_START_DATE, num_days=60),
     stores=_STORES,
     skus=_SKUS,
+    products=_PRODUCTS,
     regions=_REGIONS,
     demand=DemandConfig(
         store_baseline_range_by_tier={

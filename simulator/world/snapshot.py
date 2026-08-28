@@ -7,13 +7,17 @@ decisions and are NOT resolved by this module: output goes to a
 clearly non-final location, is not versioned, and should not be taken
 as the eventual Ground Truth snapshot architecture.
 
-The fields written here (unmet_demand, stockout) are Phase 1 Ground
-Truth facts that must never reach the production platform (Document
-8). That boundary is respected structurally, not just by convention:
-this module lives entirely inside simulator/world/, which per
-simulator/README.md is read only by Phase 2 and by the evaluation
-harness -- no ingestion/production code exists yet, and none should
-ever import from here.
+The fields written here (unmet_demand, stockout, and -- as of the
+NovaFoods reference-data checkpoint -- store_scale_class) are Phase 1
+Ground Truth facts that must never reach the production platform
+(Documents 4 and 8). That boundary is respected structurally, not just
+by convention: this module lives entirely inside simulator/world/,
+which per simulator/README.md is read only by Phase 2, by
+simulator/reference/ (the NovaFoods master-data layer), and by the
+evaluation harness -- no ingestion/production code exists yet, and none
+should ever import from here. Both downstream readers enforce the
+Latent boundary the same way Phase 2 already does: an explicit column
+allow-list that never requests store_scale_class from this file.
 """
 
 from __future__ import annotations
@@ -78,6 +82,24 @@ def write_snapshot(result: SliceResult, output_dir: Path | None = None) -> Path:
             "store_scale_class": [s.store_scale_class for s in result.stores],
             "format": [s.format for s in result.stores],
             "region": [s.region for s in result.stores],
+            "address": [s.address for s in result.stores],
+            "city": [s.city for s in result.stores],
+            "state_province": [s.state_province for s in result.stores],
+            "lat": [s.lat for s in result.stores],
+            "long": [s.long for s in result.stores],
+            "open_date": [s.open_date.isoformat() for s in result.stores],
+            "closure_effective_from": [
+                s.closure.effective_from.isoformat() if s.closure is not None else None
+                for s in result.stores
+            ],
+            "closure_effective_to": [
+                s.closure.effective_to.isoformat() if s.closure is not None else None
+                for s in result.stores
+            ],
+            "closed_date": [
+                s.closed_date.isoformat() if s.closed_date is not None else None
+                for s in result.stores
+            ],
         }
     )
     pq.write_table(stores_table, out_dir / "stores.parquet")
@@ -85,13 +107,43 @@ def write_snapshot(result: SliceResult, output_dir: Path | None = None) -> Path:
     skus_table = pa.table(
         {
             "sku_id": [k.sku_id for k in result.skus],
+            "product_id": [k.product_id for k in result.skus],
             "units_per_case": [k.units_per_case for k in result.skus],
+            "pack_size": [k.pack_size for k in result.skus],
+            "country": [k.country for k in result.skus],
             "distribution_eligible": [
                 result.config.distribution_eligibility.get(k.sku_id, True) for k in result.skus
+            ],
+            "discontinued_on": [
+                k.discontinued_on.isoformat() if k.discontinued_on is not None else None
+                for k in result.skus
+            ],
+            "temp_unavailable_effective_from": [
+                k.temporarily_unavailable.effective_from.isoformat()
+                if k.temporarily_unavailable is not None
+                else None
+                for k in result.skus
+            ],
+            "temp_unavailable_effective_to": [
+                k.temporarily_unavailable.effective_to.isoformat()
+                if k.temporarily_unavailable is not None
+                else None
+                for k in result.skus
             ],
         }
     )
     pq.write_table(skus_table, out_dir / "skus.parquet")
+
+    products_table = pa.table(
+        {
+            "product_id": [p.product_id for p in result.products],
+            "product_name": [p.product_name for p in result.products],
+            "category": [p.category for p in result.products],
+            "subcategory": [p.subcategory for p in result.products],
+            "brand": [p.brand for p in result.products],
+        }
+    )
+    pq.write_table(products_table, out_dir / "products.parquet")
 
     assortment_rows = [
         (store_id, sku_id, window.effective_from.isoformat(), window.effective_to)
