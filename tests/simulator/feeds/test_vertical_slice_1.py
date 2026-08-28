@@ -26,7 +26,7 @@ from simulator.feeds.assortment import (
     generate_assortment_artifacts,
     weekly_delivery_periods,
 )
-from simulator.feeds.identifiers import resolve_store_identifier
+from simulator.feeds.identifiers import build_barcode_mapping, resolve_store_identifier
 from simulator.feeds.pos import POS_COLUMN_ORDER, generate_pos_artifacts
 from simulator.feeds.profiles import (
     COLUMN_CASING_LOWER_SNAKE_CASE,
@@ -69,6 +69,11 @@ PROHIBITED_COLUMN_NAMES = {
     "potential_demand",
     "promotion_id",
     "promotion_phase",
+    "promotion_type",
+    "planned_start",
+    "planned_end",
+    "execution_state",
+    "discount_depth",
     "physical_inventory",
     "opening_inventory",
     "closing_inventory",
@@ -78,6 +83,13 @@ PROHIBITED_COLUMN_NAMES = {
     "store_id",  # canonical Phase 1 identifier -- must never appear as-is
     "sku_id",  # canonical Phase 1 identifier -- must never appear as-is
 }
+
+# POS source contract revision: these fields were explicitly NOT
+# implemented because Phase 1 has no monetary price anywhere to derive
+# them from -- see pos.py's module docstring and the stop-condition
+# report. Asserted absent here so a future change can't silently
+# reintroduce them without re-triggering that same review.
+BLOCKED_MONETARY_FIELDS = {"unit_price", "discount_amount", "net_sales_amount", "tax_amount"}
 
 
 # ---------------------------------------------------------------------
@@ -782,15 +794,27 @@ def test_delivery_mechanism_is_fixed_per_feed_type_regardless_of_profile(profile
 
 
 def test_pos_schema_contains_the_approved_fields_in_the_approved_order():
+    """POS source contract revision: unit_price/discount_amount/
+    net_sales_amount/tax_amount are deliberately absent -- Phase 1 has
+    no monetary price anywhere (see pos.py's module docstring) and
+    Document 10's discount_depth never touches a dollar amount, so
+    those four fields would have to be fabricated. item_barcode and
+    item_description are the two new fields that ARE legitimate (Phase
+    2 identifier-scheme / descriptive-metadata constructs, same
+    category as store_code/item_code).
+    """
     assert POS_COLUMN_ORDER == (
         "store_code",
         "item_code",
+        "item_barcode",
         "business_date",
         "sales_qty",
         "uom",
         "currency_code",
+        "item_description",
         "exported_at",
     )
+    assert BLOCKED_MONETARY_FIELDS.isdisjoint(POS_COLUMN_ORDER)
 
 
 def test_assortment_schema_contains_the_approved_fields_in_the_approved_order():
@@ -814,6 +838,64 @@ def test_pos_operational_baggage_values_are_constant_and_do_not_encode_ground_tr
     currencies = {row.currency_code for artifact in artifacts for row in artifact.rows}
     assert uoms == {"EA"}
     assert currencies == {"USD"}
+    # descriptions are a pure function of item_code, never of any hidden attribute
+    for artifact in artifacts:
+        for row in artifact.rows:
+            assert row.item_description == f"NovaFoods Product {row.item_code}"
+
+
+def test_pos_barcode_is_deterministic_stable_and_a_valid_upc_a_checksum(snapshot):
+    profile_1 = build_profile_a(snapshot.retailer_id, snapshot.store_ids, snapshot.sku_ids)
+    profile_2 = build_profile_a(snapshot.retailer_id, snapshot.store_ids, snapshot.sku_ids)
+    mapping_1 = profile_1.identifier_scheme.barcode_mapping
+    mapping_2 = profile_2.identifier_scheme.barcode_mapping
+
+    # deterministic and stable across independent builds
+    assert mapping_1 == mapping_2
+    assert mapping_1 == build_barcode_mapping(snapshot.sku_ids)
+
+    # bijective -- distinct SKUs never collide on a barcode
+    values = list(mapping_1.values())
+    assert len(values) == len(set(values))
+
+    # never the canonical sku_id, never derivable from item_code alone
+    assert set(mapping_1.values()).isdisjoint(snapshot.sku_ids)
+
+    for barcode in mapping_1.values():
+        assert len(barcode) == 12
+        assert barcode.isdigit()
+        # valid UPC-A: the 12th digit is the modulo-10 check digit of the first 11
+        payload, check_digit = barcode[:11], int(barcode[11])
+        weighted_sum = sum(
+            int(digit) * (3 if position % 2 == 0 else 1) for position, digit in enumerate(payload)
+        )
+        assert (weighted_sum + check_digit) % 10 == 0
+
+    # a real Phase 2 identifier used consistently in generated rows, not a formality
+    artifacts = generate_pos_artifacts(
+        snapshot.pos_facts, _all_dates(snapshot), profile_1.identifier_scheme, 1, None
+    )
+    for artifact in artifacts:
+        for row in artifact.rows:
+            item_id = next(
+                k
+                for k, v in profile_1.identifier_scheme.product_mapping.items()
+                if v == row.item_code
+            )
+            assert row.item_barcode == mapping_1[item_id]
+
+
+def test_pos_never_exposes_promotion_metadata_or_monetary_fields(snapshot, profile_a, profile_b):
+    """Section 12/section-17 stop condition: the POS schema exposes
+    only sales_qty (+ identifiers/baggage) -- never promotion internals
+    and never a fabricated price/discount/revenue/tax figure, since
+    Phase 1 has no monetary price to derive any of those from.
+    """
+    for profile in (profile_a, profile_b):
+        columns = set(POS_COLUMN_ORDER)
+        assert PROHIBITED_COLUMN_NAMES.isdisjoint(columns)
+        assert BLOCKED_MONETARY_FIELDS.isdisjoint(columns)
+        assert profile.feeds["POS"].format  # sanity: profile still well-formed
 
 
 def test_assortment_operational_baggage_values_are_constant_and_do_not_encode_ground_truth(

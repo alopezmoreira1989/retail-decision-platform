@@ -1,5 +1,6 @@
 """POS feed generation (Vertical Slice #1 design brief, Sections 5/7/
-8/9; Source & Delivery Model checkpoint, Sections 4/5/8).
+8/9; Source & Delivery Model checkpoint, Sections 4/5/8; POS source
+contract revision).
 
 POS observes Phase 1 Actual Sales -- never Demand, never Inventory.
 Row existence is gated by Phase 1 `sell_eligible`: a store-SKU pair
@@ -17,21 +18,34 @@ distinction (missing row != zero sales) is exactly what a future
 missing-data detection model needs to be a non-trivial problem, and it
 is why this generator never invents a row to "fill in" a missing day.
 
-Row shape, per the approved Source & Delivery Model checkpoint:
-`store_code`/`item_code` (retailer-local identifiers, never
-NovaFoods-perspective names), `business_date`, `sales_qty` (the
-business facts), plus `uom`/`currency_code`/`exported_at` -- realistic
-operational baggage a retailer's export would plausibly carry, never
-values our analytics needs to interpret them (uom/currency_code are
-constant across every row in this slice -- see module-level constants
-below -- so there is nothing to actually convert; the columns exist so
-a future ETL has to read and validate them, not because this slice
-implements a real unit/currency distortion). `exported_at` is the
-retailer's own export timestamp (layer A, artifact metadata) and must
-never be confused with `delivered_on` (layer B, the simulated delivery
-event, carried in the landing manifest -- see landing.py) -- see
-identifiers.py and the Source & Delivery Model checkpoint's
-distinction between retailer-side and NovaFoods-side metadata.
+Row shape: `store_code`/`item_code`/`item_barcode` (retailer-local
+identifiers, never NovaFoods-perspective names), `business_date`,
+`sales_qty` (the business facts), plus `uom`/`currency_code`/
+`item_description`/`exported_at` -- realistic operational baggage a
+retailer's export would plausibly carry, never values our analytics
+needs to interpret them (uom/currency_code are constant across every
+row in this slice -- see module-level constants below -- so there is
+nothing to actually convert; the columns exist so a future ETL has to
+read and validate them, not because this slice implements a real
+unit/currency distortion). `exported_at` is the retailer's own export
+timestamp (layer A, artifact metadata) and must never be confused with
+`delivered_on` (layer B, the simulated delivery event, carried in the
+landing manifest -- see landing.py).
+
+DELIBERATELY NOT INCLUDED: `unit_price`, `discount_amount`,
+`net_sales_amount`, `tax_amount`. Requested in the POS source contract
+revision, but Phase 1 has no monetary price anywhere -- demand.py's own
+docstring: "price isn't varied across SKUs in this slice, it is
+absorbed into the product-popularity draw... a known limitation while
+price has nothing to vary against." Document 10's `discount_depth`
+feeds only the demand modifier, never a price/revenue figure
+(promotions.py: "never Document 6's price-elasticity"). Retail shelf
+pricing is explicitly out of scope per Document 10, not deferred. Since
+no monetary base exists, discount/net-sales/tax cannot be derived
+either -- adding them would mean fabricating a business fact Phase 1
+does not generate, which the approved design explicitly prohibits.
+Revisit only if/when Phase 1 Ground Truth is extended with an actual
+price concept -- a Phase 1 decision, not a Phase 2 one.
 """
 
 from __future__ import annotations
@@ -41,7 +55,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, fields
 from datetime import date, datetime, time, timedelta
 
-from simulator.feeds.identifiers import IdentifierScheme, resolve_store_identifier
+from simulator.feeds.identifiers import IdentifierScheme, describe_item, resolve_store_identifier
 from simulator.feeds.profiles import PosFaultProfile
 from simulator.feeds.snapshot_reader import Phase1PosFact
 
@@ -71,10 +85,12 @@ def _exported_at(delivery_period: date) -> datetime:
 class PosRow:
     store_code: str
     item_code: str
+    item_barcode: str
     business_date: date
     sales_qty: int
     uom: str
     currency_code: str
+    item_description: str
     exported_at: datetime
 
 
@@ -121,10 +137,12 @@ def generate_pos_artifacts(
                 PosRow(
                     store_code=store_code,
                     item_code=item_code,
+                    item_barcode=identifier_scheme.barcode_mapping[fact.sku_id],
                     business_date=day,
                     sales_qty=fact.sales,
                     uom=_UOM,
                     currency_code=_CURRENCY_CODE,
+                    item_description=describe_item(item_code),
                     exported_at=exported_at,
                 )
             )

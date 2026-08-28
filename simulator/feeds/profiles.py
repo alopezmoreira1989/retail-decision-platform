@@ -34,6 +34,7 @@ import numpy as np
 from simulator.feeds.identifiers import (
     IdentifierScheme,
     StoreIdentifierMigrationFault,
+    build_barcode_mapping,
     build_product_mapping,
     build_store_mapping,
 )
@@ -95,6 +96,7 @@ def build_identifier_scheme(store_ids, sku_ids) -> IdentifierScheme:
     return IdentifierScheme(
         store_mapping=build_store_mapping(store_ids),
         product_mapping=build_product_mapping(sku_ids),
+        barcode_mapping=build_barcode_mapping(sku_ids),
     )
 
 

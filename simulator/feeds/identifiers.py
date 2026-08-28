@@ -33,10 +33,56 @@ def build_product_mapping(sku_ids: Iterable[str]) -> dict[str, str]:
     return {sku_id: f"ITEM-A{_numeric_suffix(sku_id)}" for sku_id in sku_ids}
 
 
+# A fictional, obviously-synthetic 6-digit manufacturer prefix -- not a
+# real GS1-registered prefix for any company. Combined with a 5-digit
+# item reference, this produces an 11-digit payload; the 12th digit is
+# a genuine UPC-A check digit (see `_upc_a_check_digit`), so the result
+# validates as a well-formed UPC-A barcode without being tied to any
+# real product. This is a Phase 2 retailer-side product identifier,
+# the same category as `item_code` -- never a hidden canonical ID; no
+# NovaFoods `sku_id` is recoverable from a barcode without this mapping.
+_SYNTHETIC_MANUFACTURER_PREFIX = "600000"
+
+
+def _upc_a_check_digit(payload: str) -> int:
+    """Standard UPC-A modulo-10 check digit (GS1's public algorithm,
+    not proprietary to any company): odd positions (1-indexed from the
+    left) are weighted 3, even positions weighted 1.
+    """
+    weighted_sum = sum(
+        int(digit) * (3 if position % 2 == 0 else 1) for position, digit in enumerate(payload)
+    )
+    return (10 - weighted_sum % 10) % 10
+
+
+def build_barcode_mapping(sku_ids: Iterable[str]) -> dict[str, str]:
+    """Deterministic, stable, plausible UPC-A-style 12-digit barcode
+    per canonical SKU. Pure function of `sku_id` -- no randomness, no
+    seed dependency, identical across Profile A/B (same field, same
+    value, only the column name's casing ever differs).
+    """
+    mapping: dict[str, str] = {}
+    for sku_id in sku_ids:
+        item_reference = _numeric_suffix(sku_id).zfill(5)
+        payload = f"{_SYNTHETIC_MANUFACTURER_PREFIX}{item_reference}"
+        mapping[sku_id] = f"{payload}{_upc_a_check_digit(payload)}"
+    return mapping
+
+
+def describe_item(item_code: str) -> str:
+    """Plausible, purely descriptive product-master text -- a pure
+    function of the already-resolved retailer-local `item_code`, never
+    derived from any hidden Phase 1 attribute (no such attribute --
+    product name/description -- exists in this slice's Ground Truth).
+    """
+    return f"NovaFoods Product {item_code}"
+
+
 @dataclass(frozen=True)
 class IdentifierScheme:
     store_mapping: dict[str, str]
     product_mapping: dict[str, str]
+    barcode_mapping: dict[str, str]
 
 
 @dataclass(frozen=True)
