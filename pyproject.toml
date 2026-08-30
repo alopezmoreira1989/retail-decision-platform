@@ -32,6 +32,16 @@ markers = [
     "evaluation: offline experiments comparing against hidden simulator ground truth (not a correctness gate)",
 ]
 
+[tool.setuptools.packages.find]
+# The repo root also holds empty scaffold directories for future
+# milestones (app/, config/, data_quality/, feedback/, infrastructure/,
+# ingestion/, models/, orchestration/, recommendations/,
+# transformations/ -- each just a placeholder README.md). Without this,
+# setuptools' flat-layout auto-discovery treats every one of them as a
+# candidate top-level package and refuses to build. Only `simulator`
+# (and its subpackages) is actual installable code.
+include = ["simulator*"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
